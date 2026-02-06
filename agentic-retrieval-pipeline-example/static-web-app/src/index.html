@@ -3,8 +3,37 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Davenport Technical Support</title>
+    <title>Gent Machine - Davenport Technical Support</title>
     <style>
+        /* CSS Variables for branding */
+        :root {
+            /* Gent Machine Brand */
+            --gent-blue: #00528A;
+            --gent-blue-dark: #003d66;
+            --gent-orange: #F3802B;
+            --gent-orange-light: #fde8d9;
+
+            /* Aidan Systems Brand */
+            --aidan-blue: #0598B3;
+            --aidan-light-green: #E1EFF2;
+
+            /* Functional */
+            --bg-page: #f0f0f0;
+            --text-primary: #191919;
+            --text-secondary: #444;
+            --border-light: #d0d0d0;
+
+            /* Typography - Shop Floor (large for readability) */
+            --font-base: 20px;
+            --font-large: 28px;
+            --font-medium: 18px;
+            --font-small: 14px;
+
+            /* Touch Targets */
+            --touch-min: 48px;
+            --touch-large: 56px;
+        }
+
         * {
             margin: 0;
             padding: 0;
@@ -12,36 +41,101 @@
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background-color: #f5f5f5;
+            font-family: Arial, 'Segoe UI', sans-serif;
+            background-color: var(--bg-page);
             height: 100vh;
             display: flex;
             flex-direction: column;
+            font-size: var(--font-base);
+            line-height: 1.6;
         }
 
         header {
-            background-color: #1a1a2e;
+            background-color: var(--gent-blue);
             color: white;
             padding: 1rem 2rem;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .header-brand {
             display: flex;
             align-items: center;
             gap: 1rem;
         }
 
+        .header-brand img {
+            height: 50px;
+            border-radius: 4px;
+        }
+
         header h1 {
-            font-size: 1.5rem;
-            font-weight: 600;
+            font-size: var(--font-large);
+            font-weight: 700;
         }
 
         header .subtitle {
-            font-size: 0.875rem;
-            opacity: 0.8;
+            font-size: var(--font-medium);
+            opacity: 0.9;
+        }
+
+        .header-right {
+            margin-left: auto;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 0.5rem;
+        }
+
+        .reasoning-toggle {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .reasoning-toggle label {
+            font-size: var(--font-medium);
+            opacity: 0.9;
+        }
+
+        .reasoning-toggle select {
+            padding: 0.75rem 1rem;
+            border-radius: 6px;
+            border: 2px solid rgba(255,255,255,0.3);
+            background: var(--gent-blue-dark);
+            color: white;
+            font-size: var(--font-medium);
+            min-height: var(--touch-min);
+            cursor: pointer;
+        }
+
+        .reasoning-toggle select:focus {
+            outline: 2px solid var(--gent-orange);
+        }
+
+        .powered-by {
+            font-size: var(--font-small);
+            opacity: 0.9;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .powered-by img {
+            height: 20px;
+        }
+
+        .powered-by span {
+            color: white;
+            font-weight: 300;
         }
 
         .container {
             flex: 1;
             display: flex;
-            max-width: 1200px;
+            max-width: 1400px;
             width: 100%;
             margin: 0 auto;
             padding: 1rem;
@@ -62,36 +156,46 @@
         .messages {
             flex: 1;
             overflow-y: auto;
-            padding: 1rem;
+            padding: 1.25rem;
             display: flex;
             flex-direction: column;
             gap: 1rem;
         }
 
         .message {
-            max-width: 80%;
-            padding: 1rem;
+            max-width: 85%;
+            padding: 1.25rem;
             border-radius: 12px;
-            line-height: 1.5;
+            line-height: 1.6;
+            font-size: var(--font-base);
         }
 
         .message.user {
-            background-color: #0078d4;
+            background-color: var(--gent-blue);
             color: white;
             align-self: flex-end;
             border-bottom-right-radius: 4px;
         }
 
         .message.assistant {
-            background-color: #f0f0f0;
-            color: #333;
+            background-color: var(--aidan-light-green);
+            color: var(--text-primary);
             align-self: flex-start;
             border-bottom-left-radius: 4px;
         }
 
+        .message.assistant a {
+            color: var(--gent-orange);
+            text-decoration: underline;
+        }
+
+        .message.assistant a:hover {
+            color: var(--gent-blue);
+        }
+
         .message.assistant pre {
-            background: #e0e0e0;
-            padding: 0.5rem;
+            background: #d8e8e8;
+            padding: 0.75rem;
             border-radius: 4px;
             overflow-x: auto;
             margin: 0.5rem 0;
@@ -103,141 +207,160 @@
         }
 
         .message.assistant li {
-            margin-bottom: 0.25rem;
+            margin-bottom: 0.5rem;
         }
 
         .input-container {
             padding: 1rem;
             border-top: 1px solid #eee;
             display: flex;
-            gap: 0.5rem;
+            gap: 0.75rem;
         }
 
         #user-input {
             flex: 1;
-            padding: 0.75rem 1rem;
-            border: 2px solid #e0e0e0;
+            padding: 1rem 1.25rem;
+            border: 3px solid var(--border-light);
             border-radius: 8px;
-            font-size: 1rem;
+            font-size: var(--font-base);
+            min-height: var(--touch-large);
             outline: none;
-            transition: border-color 0.2s;
+            transition: border-color 0.2s, box-shadow 0.2s;
         }
 
         #user-input:focus {
-            border-color: #0078d4;
+            border-color: var(--gent-orange);
+            box-shadow: 0 0 0 3px rgba(243, 128, 43, 0.2);
+        }
+
+        #user-input::placeholder {
+            color: #888;
+            font-size: var(--font-base);
         }
 
         #send-btn {
-            padding: 0.75rem 1.5rem;
-            background-color: #0078d4;
+            padding: 1rem 2rem;
+            background-color: var(--gent-blue);
             color: white;
             border: none;
             border-radius: 8px;
-            font-size: 1rem;
+            font-size: var(--font-base);
+            font-weight: 600;
+            min-height: var(--touch-large);
+            min-width: 120px;
             cursor: pointer;
             transition: background-color 0.2s;
         }
 
         #send-btn:hover {
-            background-color: #006abc;
+            background-color: var(--gent-blue-dark);
         }
 
         #send-btn:disabled {
-            background-color: #ccc;
+            background-color: #aaa;
             cursor: not-allowed;
         }
 
         #clear-btn {
-            padding: 0.75rem;
-            background-color: #f0f0f0;
-            border: 1px solid #e0e0e0;
+            padding: 1rem;
+            background-color: #f5f5f5;
+            border: 2px solid var(--border-light);
             border-radius: 8px;
-            font-size: 1.2rem;
+            font-size: 1.4rem;
+            min-height: var(--touch-large);
+            min-width: var(--touch-large);
             cursor: pointer;
-            transition: background-color 0.2s;
+            transition: background-color 0.2s, border-color 0.2s;
         }
 
         #clear-btn:hover {
-            background-color: #e0e0e0;
+            background-color: var(--gent-orange-light);
+            border-color: var(--gent-orange);
         }
 
-        .reasoning-toggle {
+        /* Collapsible Sidebar */
+        .sidebar-container {
             display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            margin-left: auto;
+            flex-direction: column;
         }
 
-        .reasoning-toggle label {
-            font-size: 0.875rem;
-            opacity: 0.9;
-        }
-
-        .reasoning-toggle select {
-            padding: 0.5rem;
-            border-radius: 6px;
-            border: none;
-            background: #2a2a4e;
-            color: white;
-            font-size: 0.875rem;
+        .sidebar-toggle {
+            display: block;
+            padding: 0.75rem 1rem;
+            background: white;
+            border: 2px solid var(--border-light);
+            border-radius: 8px;
+            font-size: var(--font-medium);
             cursor: pointer;
+            margin-bottom: 0.5rem;
+            min-height: var(--touch-min);
         }
 
-        .reasoning-toggle select:focus {
-            outline: 2px solid #0078d4;
+        .sidebar-toggle:hover {
+            background: var(--aidan-light-green);
+            border-color: var(--gent-blue);
         }
 
         .sidebar {
-            width: 280px;
+            width: 320px;
             background: white;
             border-radius: 12px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
             padding: 1.5rem;
+            display: none;
+        }
+
+        .sidebar.open {
+            display: block;
         }
 
         .sidebar h2 {
-            font-size: 1rem;
+            font-size: var(--font-base);
             margin-bottom: 1rem;
-            color: #333;
+            color: var(--text-primary);
         }
 
         .example-questions {
             display: flex;
             flex-direction: column;
-            gap: 0.5rem;
+            gap: 0.75rem;
         }
 
         .example-btn {
-            padding: 0.75rem;
+            padding: 1rem;
             background: #f5f5f5;
-            border: 1px solid #e0e0e0;
+            border: 2px solid var(--border-light);
             border-radius: 8px;
             text-align: left;
             cursor: pointer;
-            font-size: 0.875rem;
-            transition: background-color 0.2s;
+            font-size: var(--font-medium);
+            min-height: var(--touch-large);
+            transition: all 0.2s;
+            width: 100%;
         }
 
         .example-btn:hover {
-            background: #e8e8e8;
+            background: var(--aidan-light-green);
+            border-color: var(--gent-blue);
         }
 
         .loading {
             display: flex;
             align-items: center;
-            gap: 0.5rem;
+            gap: 0.75rem;
             color: #666;
+            font-size: var(--font-base);
         }
 
         .loading-dots {
             display: flex;
-            gap: 4px;
+            gap: 6px;
         }
 
         .loading-dots span {
-            width: 8px;
-            height: 8px;
-            background: #0078d4;
+            width: 10px;
+            height: 10px;
+            background: var(--gent-orange);
             border-radius: 50%;
             animation: bounce 1.4s infinite ease-in-out both;
         }
@@ -250,14 +373,30 @@
             40% { transform: scale(1); }
         }
 
-        @media (max-width: 768px) {
-            .sidebar { display: none; }
-            .message { max-width: 90%; }
+        /* Responsive - adjust layout on smaller screens */
+        @media (max-width: 1024px) {
+            .sidebar {
+                width: 100%;
+            }
+            .container {
+                flex-direction: column;
+            }
+            .sidebar-container {
+                order: -1;
+            }
         }
 
+        @media (max-width: 768px) {
+            .message { max-width: 95%; }
+            header { padding: 1rem; }
+            .header-brand img { height: 40px; }
+            header h1 { font-size: 24px; }
+        }
+
+        /* Trace panel (debugging) */
         .trace-panel {
-            margin-top: 0.5rem;
-            border-top: 1px dashed #ccc;
+            margin-top: 0.75rem;
+            border-top: 1px dashed #aaa;
             padding-top: 0.5rem;
         }
 
@@ -265,25 +404,25 @@
             background: none;
             border: none;
             color: #666;
-            font-size: 0.75rem;
+            font-size: var(--font-small);
             cursor: pointer;
-            padding: 0;
+            padding: 0.25rem;
             display: flex;
             align-items: center;
             gap: 0.25rem;
         }
 
         .trace-toggle:hover {
-            color: #0078d4;
+            color: var(--gent-blue);
         }
 
         .trace-content {
             display: none;
             margin-top: 0.5rem;
-            padding: 0.5rem;
+            padding: 0.75rem;
             background: #e8e8e8;
             border-radius: 4px;
-            font-size: 0.75rem;
+            font-size: var(--font-small);
             font-family: monospace;
         }
 
@@ -315,11 +454,11 @@
             display: flex;
             gap: 1rem;
             margin: 0.25rem 0 0.5rem 0;
-            font-size: 0.7rem;
+            font-size: 0.8rem;
         }
 
         .timing-item {
-            padding: 2px 6px;
+            padding: 3px 8px;
             background: #d0d0d0;
             border-radius: 3px;
         }
@@ -331,17 +470,25 @@
 </head>
 <body>
     <header>
-        <div>
-            <h1>Davenport Technical Support</h1>
-            <div class="subtitle">Model B 5-Spindle Automatic Screw Machine</div>
+        <div class="header-brand">
+            <img src="images/Gent-Machine-Logo-Blue-White-Text.jpg" alt="Gent Machine Company">
+            <div>
+                <h1>Davenport Model B Support</h1>
+                <div class="subtitle">5-Spindle Automatic Screw Machine</div>
+            </div>
         </div>
-        <div class="reasoning-toggle">
-            <label for="reasoning-level">Search depth:</label>
-            <select id="reasoning-level">
-                <option value="fast">Fast (~10s)</option>
-                <option value="balanced">Balanced (~20s)</option>
-                <option value="thorough" selected>Thorough (~45s)</option>
-            </select>
+        <div class="header-right">
+            <div class="reasoning-toggle">
+                <label for="reasoning-level">Search depth:</label>
+                <select id="reasoning-level">
+                    <option value="fast">Fast (~10s)</option>
+                    <option value="balanced">Balanced (~20s)</option>
+                    <option value="thorough" selected>Thorough (~45s)</option>
+                </select>
+            </div>
+            <div class="powered-by">
+                Powered by <img src="images/Aidan-Logo_White.png" alt="Aidan"> <span>aidan</span> systems
+            </div>
         </div>
     </header>
 
@@ -349,34 +496,39 @@
         <div class="chat-container">
             <div class="messages" id="messages">
                 <div class="message assistant">
-                    Welcome! I'm your Davenport technical support assistant. Ask me about troubleshooting, maintenance procedures, or operation of your Model B machine.
+                    Welcome to Gent Machine Davenport support. Ask about troubleshooting, maintenance, or operation of your Model B machine.
                 </div>
             </div>
             <div class="input-container">
                 <input type="text" id="user-input" placeholder="Ask about your Davenport machine..." autocomplete="off">
                 <button id="send-btn">Send</button>
-                <button id="clear-btn" title="Clear chat and start new topic">&#129529;</button>
+                <button id="clear-btn" title="Clear chat and start new topic">&#128260;</button>
             </div>
         </div>
 
-        <div class="sidebar">
-            <h2>Example Questions</h2>
-            <div class="example-questions">
-                <button class="example-btn" onclick="askQuestion('What are the common causes of spindle vibration?')">
-                    What are the common causes of spindle vibration?
-                </button>
-                <button class="example-btn" onclick="askQuestion('How do I adjust the stock reel tension?')">
-                    How do I adjust the stock reel tension?
-                </button>
-                <button class="example-btn" onclick="askQuestion('What is the cam roll inspection procedure?')">
-                    What is the cam roll inspection procedure?
-                </button>
-                <button class="example-btn" onclick="askQuestion('How do I troubleshoot chatter?')">
-                    How do I troubleshoot chatter?
-                </button>
-                <button class="example-btn" onclick="askQuestion('What weekly maintenance should I perform?')">
-                    What weekly maintenance should I perform?
-                </button>
+        <div class="sidebar-container">
+            <button class="sidebar-toggle" onclick="toggleSidebar()">
+                &#9776; Example Questions
+            </button>
+            <div class="sidebar" id="sidebar">
+                <h2>Example Questions</h2>
+                <div class="example-questions">
+                    <button class="example-btn" onclick="askQuestion('What are the common causes of spindle vibration?')">
+                        What are the common causes of spindle vibration?
+                    </button>
+                    <button class="example-btn" onclick="askQuestion('How do I adjust the stock reel tension?')">
+                        How do I adjust the stock reel tension?
+                    </button>
+                    <button class="example-btn" onclick="askQuestion('What is the cam roll inspection procedure?')">
+                        What is the cam roll inspection procedure?
+                    </button>
+                    <button class="example-btn" onclick="askQuestion('How do I troubleshoot chatter?')">
+                        How do I troubleshoot chatter?
+                    </button>
+                    <button class="example-btn" onclick="askQuestion('What weekly maintenance should I perform?')">
+                        What weekly maintenance should I perform?
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -387,14 +539,20 @@
         const sendBtn = document.getElementById('send-btn');
         const clearBtn = document.getElementById('clear-btn');
         const reasoningSelect = document.getElementById('reasoning-level');
+        const sidebarEl = document.getElementById('sidebar');
 
         // Store conversation ID
         let conversationId = null;
 
+        // Toggle sidebar visibility
+        function toggleSidebar() {
+            sidebarEl.classList.toggle('open');
+        }
+
         // Clear chat function
         function clearChat() {
             messagesEl.innerHTML = `<div class="message assistant">
-                Welcome! I'm your Davenport technical support assistant. Ask me about troubleshooting, maintenance procedures, or operation of your Model B machine.
+                Welcome to Gent Machine Davenport support. Ask about troubleshooting, maintenance, or operation of your Model B machine.
             </div>`;
             conversationId = null;
             inputEl.focus();
@@ -405,16 +563,37 @@
         function addMessage(content, role, trace = null) {
             const div = document.createElement('div');
             div.className = `message ${role}`;
-            // Simple markdown-like formatting
+            // Markdown formatting for assistant messages
             if (role === 'assistant') {
-                content = content
-                    .replace(/\n\n/g, '</p><p>')
-                    .replace(/\n- /g, '</li><li>')
-                    .replace(/\n\d+\. /g, '</li><li>')
-                    .replace(/`([^`]+)`/g, '<code>$1</code>')
-                    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-                    // Convert markdown links [text](url) to clickable HTML links
-                    .replace(/\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+                // Convert markdown links first (before other transformations)
+                content = content.replace(/\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+
+                // Handle inline code
+                content = content.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+                // Handle bold
+                content = content.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+                // Convert numbered lists - look for "1) text" or "1. text" patterns
+                // Only trigger if content starts with "1" followed by ) or .
+                const startsWithNumber = /^1[).]\s/.test(content.trim());
+                if (startsWithNumber) {
+                    // Split on patterns like ") 2)" or ". 3." to find list boundaries
+                    const items = content.split(/[).]\s*(?=\d{1,2}[).]\s)/);
+                    if (items.length > 1) {
+                        content = '<ol>' + items.map(item => {
+                            // Remove leading number and delimiter
+                            const cleaned = item.replace(/^\d{1,2}[).]\s*/, '').trim();
+                            return cleaned ? '<li>' + cleaned + '</li>' : '';
+                        }).filter(x => x).join('') + '</ol>';
+                    }
+                }
+
+                // Handle bullet lists with newlines
+                content = content.replace(/\n- /g, '</li><li>');
+
+                // Handle paragraphs
+                content = content.replace(/\n\n/g, '</p><p>');
             }
             div.innerHTML = content;
 
@@ -426,7 +605,7 @@
                 const traceHtml = `
                     <div class="trace-panel">
                         <button class="trace-toggle" onclick="toggleTrace('${traceId}')">
-                            ▶ ${duration} · ${trace.query_intents?.length || 0} sub-queries
+                            &#9654; ${duration} &middot; ${trace.query_intents?.length || 0} sub-queries
                         </button>
                         <div id="${traceId}" class="trace-content">
                             <div class="label">Agent: ${trace.agent || 'unknown'}</div>
@@ -461,10 +640,10 @@
             const btn = el.previousElementSibling;
             if (el.classList.contains('open')) {
                 el.classList.remove('open');
-                btn.innerHTML = btn.innerHTML.replace('▼', '▶');
+                btn.innerHTML = btn.innerHTML.replace('&#9660;', '&#9654;');
             } else {
                 el.classList.add('open');
-                btn.innerHTML = btn.innerHTML.replace('▶', '▼');
+                btn.innerHTML = btn.innerHTML.replace('&#9654;', '&#9660;');
             }
         }
 

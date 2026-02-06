@@ -51,6 +51,14 @@ ALL_SOURCES = [
 
 AGENT_INSTRUCTIONS = """You are a technical support assistant for Davenport Model B screw machines.
 
+GENT JARGON GLOSSARY:
+Shop floor workers may use local terms. Translate to source terminology:
+- "Machine is jumping" or "Index is skipping" → search for "Brake is loose"
+- "Tit" or "Nib" → search for "burr"
+- "Lube" → search for "Lubricating Oil"
+- "Oil" → search for "Coolant"
+- "Fingers" or "Pads" → search for "Feed Fingers"
+
 RESPONSE STYLE:
 - Use bullet points, be concise
 - Lead with most likely cause first

@@ -5,10 +5,29 @@ Connects to the agentic retrieval agent via Azure AI Projects SDK.
 
 import json
 import logging
+import re
 import time
 import azure.functions as func
 from azure.identity import DefaultAzureCredential
 from azure.ai.projects import AIProjectClient
+
+# Storage config for video links
+STORAGE_ACCOUNT = "stj6lw7vswhnnhw"
+TRANSCRIPT_CONTAINER = "video-training"
+
+# YouTube video mapping: transcript filename (without .md) -> YouTube video ID
+YOUTUBE_VIDEO_MAP = {
+    "Davenport Machine Model B - Basic Identification (part 1)": "Bgqf1gt0y10",
+    "Davenport Machine Model B - Basic Identification (part 2)": "7NYKOGs6CDs",
+    "Davenport Machine Model B - Cross Working Tools (part 1)": "rINsPjoNOlA",
+    "Davenport Machine Model B - Cross Working Tools (part 2)": "fb0zCgmn55s",
+    "Davenport Machine Model B - The Work Spindles": "lwnB7ysRsGs",
+    "Davenport Machine Model B - Stocking": "22tb3sbqquM",
+    "Davenport Machine Model B - End Working Tools": "NMeeZX7ie44",
+    "Davenport Machine Model B - E2726 Size Toll Holder": "diMpiXFFPVo",
+    "Davenport Machine Model B - Chuck and Feed Mechanism": "C8NLYDmM9jk",
+    "Davenport Machine Model B - Preventive Maintenance": "RIxzlj3ANTY",
+}
 
 # Configuration
 PROJECT_ENDPOINT = "https://aoai-j6lw7vswhnnhw.services.ai.azure.com/api/projects/proj-j6lw7vswhnnhw"
@@ -42,6 +61,70 @@ def get_clients():
         _openai_client = _project_client.get_openai_client()
 
     return _project_client, _openai_client
+
+
+def transform_transcript_urls_to_youtube(text):
+    """Replace transcript URLs in response text with YouTube URLs.
+
+    Changes links from video-training/*.md to YouTube URLs with timestamps.
+    Extracts timestamps from surrounding text (e.g., "02:28-02:38" or "04:14").
+    """
+    # Pattern: [link text](https://storage.blob.../video-training/Name.md) optional_timestamp
+    # We need to capture the full markdown link plus any timestamp after it
+    # Use .+? (non-greedy) instead of [^)]+ to handle filenames with parentheses like "(part 1)"
+    pattern = rf'\[([^\]]+)\]\((https://{STORAGE_ACCOUNT}\.blob\.core\.windows\.net/{TRANSCRIPT_CONTAINER}/(.+?)\.md)\)(\s*(\d{{1,2}}:\d{{2}}(?:-\d{{1,2}}:\d{{2}})?))?'
+
+    def replace_with_youtube(match):
+        link_text = match.group(1)
+        video_name_encoded = match.group(3)
+        timestamp_str = match.group(5)  # e.g., "02:28" or "02:28-02:38"
+
+        # URL decode the video name (replace %20 with space, etc.)
+        from urllib.parse import unquote
+        video_name = unquote(video_name_encoded)
+
+        # Look up YouTube video ID
+        youtube_id = YOUTUBE_VIDEO_MAP.get(video_name)
+        if not youtube_id:
+            # No YouTube mapping, keep original link
+            return match.group(0)
+
+        # Build YouTube URL
+        youtube_url = f"https://www.youtube.com/watch?v={youtube_id}"
+
+        # Add timestamp if present (use first timestamp in range)
+        if timestamp_str:
+            # Parse timestamp like "02:28" or "02:28-02:38" (take first part)
+            time_part = timestamp_str.split('-')[0]
+            parts = time_part.split(':')
+            if len(parts) == 2:
+                minutes, seconds = int(parts[0]), int(parts[1])
+                total_seconds = minutes * 60 + seconds
+                youtube_url += f"&t={total_seconds}"
+
+        # Return new markdown link (keep original text, add timestamp to display)
+        display_text = link_text
+        if timestamp_str:
+            display_text = f"{link_text} {timestamp_str}"
+        return f"[{display_text}]({youtube_url})"
+
+    result = re.sub(pattern, replace_with_youtube, text)
+
+    # Also handle plain URLs without markdown formatting
+    # Use .+? (non-greedy) to handle filenames with parentheses
+    plain_pattern = rf'(https://{STORAGE_ACCOUNT}\.blob\.core\.windows\.net/{TRANSCRIPT_CONTAINER}/(.+?)\.md)(?=[\s")\]]|$)'
+
+    def replace_plain_url(match):
+        full_url = match.group(1)
+        video_name_encoded = match.group(2)
+        from urllib.parse import unquote
+        video_name = unquote(video_name_encoded)
+        youtube_id = YOUTUBE_VIDEO_MAP.get(video_name)
+        if youtube_id:
+            return f"https://www.youtube.com/watch?v={youtube_id}"
+        return full_url
+
+    return re.sub(plain_pattern, replace_plain_url, result)
 
 
 def extract_reasoning_trace(response):
@@ -85,7 +168,6 @@ def extract_reasoning_trace(response):
                 output_str = item.get("output", "")
                 if "Retrieved" in output_str:
                     # Parse "Retrieved X documents"
-                    import re
                     match = re.search(r"Retrieved (\d+) documents", output_str)
                     if match:
                         trace["sources_found"] = int(match.group(1))
@@ -156,11 +238,14 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
         trace = extract_reasoning_trace(response)
         trace["timings"] = timings
 
+        # Transform transcript URLs to YouTube URLs in response text
+        response_text = transform_transcript_urls_to_youtube(response.output_text)
+
         logging.info(f"Timings: {timings}")
 
         return func.HttpResponse(
             json.dumps({
-                "response": response.output_text,
+                "response": response_text,
                 "conversation_id": conversation_id,
                 "trace": trace
             }),

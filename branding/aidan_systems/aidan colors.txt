@@ -1,0 +1,21 @@
+Blue: 0598b3
+Black: 000000
+
+The fonts are:
+aidan: Bauhaus (light)
+artificial intelligence for healthcare: Century Gothic (Regular)
+
+
+Website colors
+main color 	E1EFF2  light green
+secondary color 95DABB  grey green
+third color	191919  black
+fourth color	0598B3  aidan blue
+light color	FFFFFF  white
+dark color	000000  really black
+
+
+
+Power BI
+Color 1 Aidan Blue	#0598b3
+
