@@ -105,3 +105,6 @@ venv.bak/
 
 # Azurite files for local environment
 __azurite_*
+
+# Claude Code local settings (machine-specific permissions, not for sharing)
+.claude/
