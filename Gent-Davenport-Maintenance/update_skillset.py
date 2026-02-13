@@ -53,6 +53,10 @@ CHAT_DEPLOYMENT = "gpt-5-mini"
 # 5 is a good balance: cuts image processing time ~5x without hammering the endpoint.
 CHAT_SKILL_PARALLELISM = 5
 
+# Skill timeout — default PT1M is too short for image-heavy docs.
+# A single PDF with many images can take 30+ minutes to verbalize.
+CHAT_SKILL_TIMEOUT = "PT2H"
+
 # Indexer schedule — auto-resume after the 2-hour execution timeout.
 # Azure Search indexers are single-instance, so if one is already running the
 # scheduled trigger is simply skipped (no queue, no backlog).
@@ -177,6 +181,14 @@ def fix_skillset(headers, skillset_name):
                 skill["degreeOfParallelism"] = CHAT_SKILL_PARALLELISM
                 changes_made.append(
                     f"  [FIX] {skill_name} parallelism: {old_parallelism} -> {CHAT_SKILL_PARALLELISM}"
+                )
+
+            # Set timeout — default PT1M is too short for image-heavy docs
+            old_timeout = skill.get("timeout", "PT1M")
+            if old_timeout != CHAT_SKILL_TIMEOUT:
+                skill["timeout"] = CHAT_SKILL_TIMEOUT
+                changes_made.append(
+                    f"  [FIX] {skill_name} timeout: {old_timeout} -> {CHAT_SKILL_TIMEOUT}"
                 )
 
             for inp in skill.get("inputs", []):
