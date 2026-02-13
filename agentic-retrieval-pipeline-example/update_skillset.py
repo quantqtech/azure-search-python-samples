@@ -48,6 +48,16 @@ AOAI_KEY = os.environ.get("AOAI_KEY")
 # Chat model for image verbalization
 CHAT_DEPLOYMENT = "gpt-5-mini"
 
+# Parallelism for ChatCompletionSkill — process multiple images concurrently.
+# Default is 1 (sequential). Higher = faster but more AOAI quota usage.
+# 5 is a good balance: cuts image processing time ~5x without hammering the endpoint.
+CHAT_SKILL_PARALLELISM = 5
+
+# Indexer schedule — auto-resume after the 2-hour execution timeout.
+# Azure Search indexers are single-instance, so if one is already running the
+# scheduled trigger is simply skipped (no queue, no backlog).
+INDEXER_SCHEDULE_INTERVAL = "PT30M"  # ISO 8601: every 30 minutes
+
 # Davenport-specific image verbalization prompt
 # This replaces the generic "Please describe this image" with a prompt that
 # extracts the technical details machinists actually search for
@@ -159,8 +169,16 @@ def fix_skillset(headers, skillset_name):
                     f"({EMBEDDING_DIMENSIONS} dimensions)"
                 )
 
-        # Fix image verbalization prompt - replace generic with Davenport-specific
+        # Fix image verbalization — prompt + parallelism
         if skill_type == "#Microsoft.Skills.Custom.ChatCompletionSkill":
+            # Set degreeOfParallelism so multiple images process concurrently
+            old_parallelism = skill.get("degreeOfParallelism", 1)
+            if old_parallelism != CHAT_SKILL_PARALLELISM:
+                skill["degreeOfParallelism"] = CHAT_SKILL_PARALLELISM
+                changes_made.append(
+                    f"  [FIX] {skill_name} parallelism: {old_parallelism} -> {CHAT_SKILL_PARALLELISM}"
+                )
+
             for inp in skill.get("inputs", []):
                 if inp["name"] == "systemMessage":
                     old_prompt = inp.get("source", "")
@@ -188,6 +206,39 @@ def fix_skillset(headers, skillset_name):
     update_skillset(headers, skillset)
     print(f"  [OK] Skillset updated")
     return True
+
+
+def set_indexer_schedule(headers, skillset_name):
+    """Add a recurring schedule to the indexer so it auto-resumes after timeout.
+
+    Azure Search has a 2-hour execution limit per run. For image-heavy pipelines
+    that need more time, scheduling lets the indexer pick up where it left off.
+    Indexers are single-instance — if already running, the scheduled trigger is skipped.
+    """
+    indexer_name = skillset_name.replace("-skillset", "-indexer")
+
+    # GET current indexer definition
+    url = f"{SEARCH_ENDPOINT}/indexers/{indexer_name}?api-version={API_VERSION}"
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+    indexer = response.json()
+
+    # Check if schedule already matches
+    current_schedule = indexer.get("schedule", {})
+    current_interval = current_schedule.get("interval", None)
+    if current_interval == INDEXER_SCHEDULE_INTERVAL:
+        print(f"  Schedule already set to {INDEXER_SCHEDULE_INTERVAL} — no change needed")
+        return
+
+    # Set the schedule
+    indexer["schedule"] = {"interval": INDEXER_SCHEDULE_INTERVAL}
+
+    # PUT updated indexer back (include etag for safe update)
+    update_headers = {**headers, "If-Match": indexer["@odata.etag"]}
+    response = requests.put(url, headers=update_headers, json=indexer)
+    response.raise_for_status()
+    print(f"  [OK] Indexer schedule set to {INDEXER_SCHEDULE_INTERVAL} "
+          f"(was: {current_interval or 'none'})")
 
 
 def reset_and_run_indexer(headers, skillset_name):
@@ -229,6 +280,10 @@ def main():
 
         changed = fix_skillset(headers, skillset_name)
 
+        # Always set the schedule (even if skillset didn't change)
+        print(f"\n  Setting indexer schedule...")
+        set_indexer_schedule(headers, skillset_name)
+
         if changed:
             reset_and_run_indexer(headers, skillset_name)
         else:
@@ -239,6 +294,8 @@ def main():
     print("\nThe indexer will re-process all documents with:")
     print(f"  - Embedding model: {EMBEDDING_DEPLOYMENT} ({EMBEDDING_DIMENSIONS}d)")
     print("  - Image prompt: Davenport-specific part number extraction")
+    print(f"  - Image parallelism: {CHAT_SKILL_PARALLELISM} concurrent calls")
+    print(f"  - Schedule: every {INDEXER_SCHEDULE_INTERVAL} (auto-resume after timeout)")
     print("\nCheck Azure Portal > AI Search > Indexers for progress.")
     print("=" * 60)
 
