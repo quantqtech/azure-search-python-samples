@@ -74,8 +74,8 @@ def query_with_details(question: str):
                         # Show result count
                         if "results" in kb_response:
                             print(f"  Results returned: {len(kb_response['results'])}")
-                except:
-                    # Show truncated output
+                except (json.JSONDecodeError, KeyError, TypeError):
+                    # Couldn't parse as structured response — show raw output
                     print(f"  Output (truncated): {str(output)[:300]}...")
 
             elif item_type == "message":

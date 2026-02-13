@@ -16,7 +16,7 @@ result = subprocess.run(
 token = result.stdout.strip()
 
 # Read index.html
-with open(r"c:\repos\azure-search-python-samples\agentic-retrieval-pipeline-example\static-web-app\src\index.html", "r") as f:
+with open(r"c:\repos\azure-search-python-samples\Gent-Davenport-Maintenance\static-web-app\src\index.html", "r") as f:
     content = f.read()
 
 print(f"Token length: {len(token)}")
@@ -30,11 +30,11 @@ zip_buffer = io.BytesIO()
 with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
     zf.writestr('index.html', content)
     # Add config
-    with open(r"c:\repos\azure-search-python-samples\agentic-retrieval-pipeline-example\static-web-app\src\staticwebapp.config.json", "r") as f:
+    with open(r"c:\repos\azure-search-python-samples\Gent-Davenport-Maintenance\static-web-app\src\staticwebapp.config.json", "r") as f:
         zf.writestr('staticwebapp.config.json', f.read())
 
 # Save zip file
-zip_path = r"c:\repos\azure-search-python-samples\agentic-retrieval-pipeline-example\static-web-app\deploy.zip"
+zip_path = r"c:\repos\azure-search-python-samples\Gent-Davenport-Maintenance\static-web-app\deploy.zip"
 with open(zip_path, 'wb') as f:
     f.write(zip_buffer.getvalue())
 

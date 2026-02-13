@@ -3,7 +3,7 @@ Diagnostic: dump the auth config from each skill in the maintenance-manuals skil
 Shows how each skill authenticates to AOAI so we can fix the 401 errors.
 
 Usage:
-  python agentic-retrieval-pipeline-example/diagnose_skillset.py
+  python Gent-Davenport-Maintenance/diagnose_skillset.py
 """
 
 import json

@@ -89,8 +89,8 @@ def create_schema_from_json_and_upload(schema, index_name, admin_client, url=Fal
             print(f"Schema uploaded; Index created for {index_name}.")
         else:
             exit(0)
-    except:
-        print("Unexpected error:", sys.exc_info()[0])
+    except Exception as e:
+        print(f"Failed to create index: {e}")
 
 
 # Convert CSV data to JSON

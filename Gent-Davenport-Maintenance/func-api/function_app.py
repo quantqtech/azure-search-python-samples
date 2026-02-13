@@ -161,8 +161,8 @@ def extract_reasoning_trace(response):
                     args = json.loads(args_str)
                     intents = args.get("request", {}).get("knowledgeAgentIntents", [])
                     trace["query_intents"] = intents
-                except:
-                    pass
+                except (json.JSONDecodeError, KeyError):
+                    pass  # MCP args may not always be valid JSON
 
                 # Count sources from output
                 output_str = item.get("output", "")

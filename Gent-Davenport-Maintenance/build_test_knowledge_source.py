@@ -17,7 +17,7 @@ Get AOAI key:
   az cognitiveservices account keys list --name aoai-j6lw7vswhnnhw --resource-group rg-gent-foundry-eus2 --query key1 -o tsv
 
 Usage:
-  python agentic-retrieval-pipeline-example/build_test_knowledge_source.py
+  python Gent-Davenport-Maintenance/build_test_knowledge_source.py
 """
 
 import os

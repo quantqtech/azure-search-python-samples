@@ -19,7 +19,7 @@ If your configuration uses a search service managed identity for indexer connect
 
 | Sample | Description |
 |--------|-------------|
-| [agentic-retrieval-pipeline-example](agentic-retrieval-pipeline-example/agent-example.ipynb) | Extends the quickstart by integrating Foundry Agent Service. Add an AI agent and MCP tool to your Azure AI Search agentic retrieval pipeline for an end-to-end conversational search experience. |
+| [Gent-Davenport-Maintenance](Gent-Davenport-Maintenance/agent-example.ipynb) | Davenport Model B technical support system. Uses Azure AI Search agentic retrieval with Foundry Agent Service for conversational search over maintenance manuals, engineering tips, and troubleshooting docs. |
 | [azure-function-search](azure-function-search/readme.md) | An Azure Function that sends query requests to an Azure AI Search service. You can substitute this code to replace the contents of the `api` folder in the C# sample [azure-search-static-web-app](https://github.com/Azure-Samples/azure-search-static-web-app). |
 | [bulk-insert](bulk-insert/readme.md) | Create and load an index using the push APIs and sample data. You can substitute this code to replace the contents of the `bulk-insert` folder in the C# sample [azure-search-static-web-app](https://github.com/Azure-Samples/azure-search-static-web-app) |
 | [cmk-encryption](cmk-example/cmk-example.ipynb) | Encrypt content using customer-managed keys. |

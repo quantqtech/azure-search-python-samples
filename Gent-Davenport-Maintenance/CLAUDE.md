@@ -1,4 +1,4 @@
-# Agentic Retrieval Pipeline - Project Instructions
+# Gent Davenport Maintenance - Project Instructions
 
 ## Project Overview
 Davenport Model B screw machine technical support system using Azure AI Search agentic retrieval (Foundry IQ). Agents connect to knowledge bases via MCP to answer shop floor questions.

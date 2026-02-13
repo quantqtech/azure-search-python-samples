@@ -2,7 +2,7 @@
 Create a Foundry Agent with MCPTool connected to the davenport-machine-kb Knowledge Base.
 Uses existing infrastructure in rg-gent-foundry-eus2.
 
-Based on the pattern from azure-search-python-samples/agentic-retrieval-pipeline-example
+Based on the pattern from azure-search-python-samples/Gent-Davenport-Maintenance
 """
 
 from azure.identity import DefaultAzureCredential
