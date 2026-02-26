@@ -965,72 +965,79 @@
             let rawText = '';
 
             try {
-                const response = await fetch(`${API_BASE}/chat/stream`, {
+                // Try streaming first; fall back to regular /chat if not available
+                const streamResp = await fetch(`${API_BASE}/chat/stream`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ message, conversation_id: conversationId, reasoning_level: reasoningLevel })
                 });
 
-                if (!response.ok) {
-                    // Non-2xx — fall back to reading body as text
-                    throw new Error(`Server error: ${response.status}`);
-                }
+                if (streamResp.ok) {
+                    // --- Streaming path ---
+                    const reader = streamResp.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = '';
 
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = '';
+                    while (true) {
+                        const { value, done } = await reader.read();
+                        if (done) break;
 
-                while (true) {
-                    const { value, done } = await reader.read();
-                    if (done) break;
+                        buffer += decoder.decode(value, { stream: true });
+                        const parts = buffer.split('\n\n');
+                        buffer = parts.pop();
 
-                    buffer += decoder.decode(value, { stream: true });
-                    // SSE lines are separated by double-newline
-                    const parts = buffer.split('\n\n');
-                    buffer = parts.pop(); // last part may be incomplete
+                        for (const part of parts) {
+                            const line = part.trim();
+                            if (!line.startsWith('data: ')) continue;
+                            let data;
+                            try { data = JSON.parse(line.slice(6)); } catch { continue; }
 
-                    for (const part of parts) {
-                        const line = part.trim();
-                        if (!line.startsWith('data: ')) continue;
-                        let data;
-                        try { data = JSON.parse(line.slice(6)); } catch { continue; }
-
-                        if (data.type === 'session') {
-                            conversationId = data.conversation_id;
-
-                        } else if (data.type === 'status') {
-                            // Show status while search / generation is running
-                            assistantDiv.innerHTML =
-                                `<div class="stream-status">${data.text}</div>` +
-                                '<span class="streaming-cursor"></span>';
-
-                        } else if (data.type === 'delta') {
-                            // Token arrived — render progressively
-                            rawText += data.text;
-                            assistantDiv.innerHTML =
-                                formatMarkdown(rawText) +
-                                '<span class="streaming-cursor"></span>';
-                            messagesEl.scrollTop = messagesEl.scrollHeight;
-
-                        } else if (data.type === 'done') {
-                            // Final render with YouTube URLs already transformed
-                            assistantDiv.innerHTML = formatMarkdown(data.full_text);
-                            // Append trace + feedback bar
-                            assistantDiv.innerHTML +=
-                                buildTraceHtml(data.trace) +
-                                buildFeedbackBar(msgIndex);
-                            // Save to history for feedback submission
-                            messageHistory.push({
-                                message,
-                                response: data.full_text,
-                                reasoning_level: reasoningLevel
-                            });
-                            messagesEl.scrollTop = messagesEl.scrollHeight;
-
-                        } else if (data.type === 'error') {
-                            assistantDiv.innerHTML = `<strong>Error:</strong> ${data.text}`;
+                            if (data.type === 'session') {
+                                conversationId = data.conversation_id;
+                            } else if (data.type === 'status') {
+                                assistantDiv.innerHTML =
+                                    `<div class="stream-status">${data.text}</div>` +
+                                    '<span class="streaming-cursor"></span>';
+                            } else if (data.type === 'delta') {
+                                rawText += data.text;
+                                assistantDiv.innerHTML =
+                                    formatMarkdown(rawText) +
+                                    '<span class="streaming-cursor"></span>';
+                                messagesEl.scrollTop = messagesEl.scrollHeight;
+                            } else if (data.type === 'done') {
+                                assistantDiv.innerHTML = formatMarkdown(data.full_text);
+                                assistantDiv.innerHTML +=
+                                    buildTraceHtml(data.trace) +
+                                    buildFeedbackBar(msgIndex);
+                                messageHistory.push({ message, response: data.full_text, reasoning_level: reasoningLevel });
+                                messagesEl.scrollTop = messagesEl.scrollHeight;
+                            } else if (data.type === 'error') {
+                                assistantDiv.innerHTML = `<strong>Error:</strong> ${data.text}`;
+                            }
                         }
                     }
+
+                } else {
+                    // --- Non-streaming fallback (streaming not available) ---
+                    assistantDiv.innerHTML =
+                        '<div class="stream-status">Searching knowledge base...</div>';
+
+                    const resp = await fetch(`${API_BASE}/chat`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ message, conversation_id: conversationId, reasoning_level: reasoningLevel })
+                    });
+                    const data = await resp.json();
+
+                    if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+
+                    conversationId = data.conversation_id;
+                    assistantDiv.innerHTML = formatMarkdown(data.response);
+                    assistantDiv.innerHTML +=
+                        buildTraceHtml(data.trace) +
+                        buildFeedbackBar(msgIndex);
+                    messageHistory.push({ message, response: data.response, reasoning_level: reasoningLevel });
+                    messagesEl.scrollTop = messagesEl.scrollHeight;
                 }
 
             } catch (err) {

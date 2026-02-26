@@ -265,7 +265,7 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
         t2 = time.time()
         response = openai_client.responses.create(
             conversation=conversation_id,
-            tool_choice="required",
+            tool_choice="auto",
             input=message,
             extra_body={"agent": {"name": agent_name, "type": "agent_reference"}},
         )
@@ -361,7 +361,7 @@ def chat_stream(req: func.HttpRequest) -> func.HttpResponse:
             # Stream the agent response — tokens arrive as they're generated
             stream = openai_client.responses.create(
                 conversation=conv_id,
-                tool_choice="required",
+                tool_choice="auto",
                 input=message,
                 stream=True,
                 extra_body={"agent": {"name": agent_name, "type": "agent_reference"}},
