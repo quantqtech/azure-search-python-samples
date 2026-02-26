@@ -1,15 +1,19 @@
 """
 Azure Function: Chat API endpoint for Davenport Assistant.
 Connects to the agentic retrieval agent via Azure AI Projects SDK.
+Includes streaming, feedback, and voice memo endpoints for production use.
 """
 
 import json
 import logging
 import re
 import time
+import uuid
+from datetime import datetime, timezone
 import azure.functions as func
 from azure.identity import DefaultAzureCredential
 from azure.ai.projects import AIProjectClient
+from azurefunctions.extensions.http.fastapi import Request, StreamingResponse
 
 # Storage config for video links
 STORAGE_ACCOUNT = "stj6lw7vswhnnhw"
@@ -43,9 +47,15 @@ DEFAULT_AGENT = "davenport-assistant"
 # Create function app
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
+# Azure Table Storage config (feedback data)
+TABLE_STORAGE_ENDPOINT = f"https://{STORAGE_ACCOUNT}.table.core.windows.net"
+BLOB_STORAGE_ENDPOINT = f"https://{STORAGE_ACCOUNT}.blob.core.windows.net"
+
 # Cache clients for reuse across invocations
 _project_client = None
 _openai_client = None
+_table_client = None
+_blob_service_client = None
 
 
 def get_clients():
@@ -61,6 +71,35 @@ def get_clients():
         _openai_client = _project_client.get_openai_client()
 
     return _project_client, _openai_client
+
+
+def get_table_client(table_name="feedback"):
+    """Get or create Azure Table Storage client (cached)."""
+    global _table_client
+    if _table_client is None:
+        from azure.data.tables import TableServiceClient
+        credential = DefaultAzureCredential()
+        service = TableServiceClient(
+            endpoint=TABLE_STORAGE_ENDPOINT,
+            credential=credential
+        )
+        # Create table if it doesn't exist (idempotent)
+        service.create_table_if_not_exists(table_name)
+        _table_client = service.get_table_client(table_name)
+    return _table_client
+
+
+def get_blob_service_client():
+    """Get or create Azure Blob Storage client (cached)."""
+    global _blob_service_client
+    if _blob_service_client is None:
+        from azure.storage.blob import BlobServiceClient
+        credential = DefaultAzureCredential()
+        _blob_service_client = BlobServiceClient(
+            account_url=BLOB_STORAGE_ENDPOINT,
+            credential=credential
+        )
+    return _blob_service_client
 
 
 def transform_transcript_urls_to_youtube(text):
@@ -195,7 +234,7 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
 
     message = req_body.get('message')
     conversation_id = req_body.get('conversation_id')
-    reasoning_level = req_body.get('reasoning_level', 'thorough')  # Default to thorough
+    reasoning_level = req_body.get('reasoning_level', 'thorough')  # Default to thorough for accuracy
 
     if not message:
         return func.HttpResponse(
@@ -258,5 +297,283 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             json.dumps({"error": str(e)}),
             mimetype="application/json",
+            status_code=500
+        )
+
+
+# ---------------------------------------------------------------------------
+# Streaming chat endpoint — tokens appear as they're generated
+# ---------------------------------------------------------------------------
+
+@app.route(route="chat/stream", methods=["POST"])
+async def chat_stream(req: Request) -> StreamingResponse:
+    """Streaming chat endpoint using Server-Sent Events.
+
+    Sends tokens as they arrive from the agent, so the user sees
+    the response building progressively instead of waiting 30-45s.
+    """
+    body = await req.json()
+    message = body.get("message")
+    conversation_id = body.get("conversation_id")
+    reasoning_level = body.get("reasoning_level", "thorough")
+
+    if not message:
+        return StreamingResponse(
+            iter([f"data: {json.dumps({'type': 'error', 'text': 'Message is required'})}\n\n"]),
+            media_type="text/event-stream",
+            status_code=400
+        )
+
+    agent_name = AGENTS.get(reasoning_level, DEFAULT_AGENT)
+    logging.info(f"[stream] Using agent: {agent_name} (reasoning_level: {reasoning_level})")
+
+    def event_generator():
+        """Sync generator that yields SSE events from the agent stream."""
+        try:
+            t0 = time.time()
+            _, openai_client = get_clients()
+
+            # Create conversation if needed
+            if not conversation_id:
+                conversation = openai_client.conversations.create()
+                conv_id = conversation.id
+            else:
+                conv_id = conversation_id
+
+            # Send conversation_id immediately so frontend can track it
+            yield f"data: {json.dumps({'type': 'session', 'conversation_id': conv_id})}\n\n"
+
+            # Notify user that search is starting
+            yield f"data: {json.dumps({'type': 'status', 'text': 'Searching knowledge base...'})}\n\n"
+
+            # Stream the agent response — tokens arrive as they're generated
+            stream = openai_client.responses.create(
+                conversation=conv_id,
+                tool_choice="required",
+                input=message,
+                stream=True,
+                extra_body={"agent": {"name": agent_name, "type": "agent_reference"}},
+            )
+
+            full_text = ""
+            first_text = True
+            trace = {
+                "agent": agent_name,
+                "query_intents": [],
+                "sources_found": 0,
+                "tokens": {}
+            }
+
+            for event in stream:
+                event_type = getattr(event, "type", None)
+
+                # Text delta — the main content tokens
+                if event_type == "response.output_text.delta":
+                    delta = event.delta
+                    full_text += delta
+                    if first_text:
+                        # Notify frontend that text is starting (search phase done)
+                        yield f"data: {json.dumps({'type': 'status', 'text': 'Generating answer...'})}\n\n"
+                        first_text = False
+                    yield f"data: {json.dumps({'type': 'delta', 'text': delta})}\n\n"
+
+                # MCP call events — extract query decomposition for trace
+                elif event_type == "response.mcp_call.arguments.delta":
+                    pass  # MCP args arrive in chunks, we'll get full args on completion
+                elif event_type == "response.mcp_call.completed":
+                    # Try to extract trace info from completed MCP call
+                    try:
+                        if hasattr(event, "arguments"):
+                            args = json.loads(event.arguments)
+                            intents = args.get("request", {}).get("knowledgeAgentIntents", [])
+                            if intents:
+                                trace["query_intents"] = intents
+                    except (json.JSONDecodeError, AttributeError):
+                        pass
+
+                # Response completed — send final transformed text + trace
+                elif event_type == "response.completed":
+                    elapsed = round((time.time() - t0) * 1000)
+                    trace["timings"] = {"total": elapsed}
+
+                    # Extract token usage from the completed response
+                    try:
+                        resp = event.response
+                        if hasattr(resp, "usage") and resp.usage:
+                            trace["tokens"] = {
+                                "input": getattr(resp.usage, "input_tokens", 0),
+                                "output": getattr(resp.usage, "output_tokens", 0),
+                                "total": getattr(resp.usage, "total_tokens", 0)
+                            }
+                    except Exception:
+                        pass
+
+                    # Apply YouTube URL transformation to the full assembled text
+                    final_text = transform_transcript_urls_to_youtube(full_text)
+                    yield f"data: {json.dumps({'type': 'done', 'full_text': final_text, 'trace': trace})}\n\n"
+
+            logging.info(f"[stream] Completed in {round((time.time() - t0) * 1000)}ms")
+
+        except Exception as e:
+            logging.error(f"[stream] Error: {str(e)}")
+            yield f"data: {json.dumps({'type': 'error', 'text': str(e)})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering if behind proxy
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Feedback endpoints — thumbs up/down, flag, and notes
+# ---------------------------------------------------------------------------
+
+@app.route(route="feedback", methods=["POST"])
+def submit_feedback(req: func.HttpRequest) -> func.HttpResponse:
+    """Save user feedback (thumbs up/down/flag) for a response."""
+    try:
+        body = req.get_json()
+    except ValueError:
+        return func.HttpResponse(
+            json.dumps({"error": "Invalid JSON"}),
+            mimetype="application/json", status_code=400
+        )
+
+    now = datetime.now(timezone.utc)
+    entity = {
+        "PartitionKey": now.strftime("%Y-%m-%d"),
+        "RowKey": f"{now.strftime('%Y%m%dT%H%M%S')}_{uuid.uuid4().hex[:6]}",
+        "conversation_id": body.get("conversation_id", ""),
+        "message": body.get("message", "")[:32000],
+        "response": body.get("response", "")[:32000],
+        "rating": body.get("rating", ""),
+        "notes": body.get("notes", "")[:4000],
+        "initials": body.get("initials", ""),
+        "reasoning_level": body.get("reasoning_level", ""),
+    }
+
+    try:
+        table = get_table_client()
+        table.create_entity(entity)
+        logging.info(f"Feedback saved: {entity['rating']} from {entity['initials'] or 'anonymous'}")
+        return func.HttpResponse(
+            json.dumps({"status": "saved"}),
+            mimetype="application/json", status_code=201
+        )
+    except Exception as e:
+        logging.error(f"Failed to save feedback: {str(e)}")
+        return func.HttpResponse(
+            json.dumps({"error": str(e)}),
+            mimetype="application/json", status_code=500
+        )
+
+
+@app.route(route="feedback", methods=["GET"])
+def get_feedback(req: func.HttpRequest) -> func.HttpResponse:
+    """Retrieve feedback entries for admin review.
+
+    Optional query params: ?rating=flagged&date=2026-02-25
+    """
+    rating_filter = req.params.get("rating")
+    date_filter = req.params.get("date")
+
+    # Build OData filter
+    filters = []
+    if date_filter:
+        filters.append(f"PartitionKey eq '{date_filter}'")
+    if rating_filter:
+        filters.append(f"rating eq '{rating_filter}'")
+    query_filter = " and ".join(filters) if filters else None
+
+    try:
+        table = get_table_client()
+        entities = list(table.query_entities(query_filter=query_filter))
+
+        # Convert to JSON-serializable format
+        results = []
+        for entity in entities:
+            results.append({
+                "date": entity.get("PartitionKey"),
+                "id": entity.get("RowKey"),
+                "conversation_id": entity.get("conversation_id"),
+                "message": entity.get("message"),
+                "response": entity.get("response"),
+                "rating": entity.get("rating"),
+                "notes": entity.get("notes"),
+                "initials": entity.get("initials"),
+                "reasoning_level": entity.get("reasoning_level"),
+            })
+
+        return func.HttpResponse(
+            json.dumps(results, default=str),
+            mimetype="application/json", status_code=200
+        )
+    except Exception as e:
+        logging.error(f"Failed to get feedback: {str(e)}")
+        return func.HttpResponse(
+            json.dumps({"error": str(e)}),
+            mimetype="application/json", status_code=500
+        )
+
+
+# ---------------------------------------------------------------------------
+# Voice memo endpoint — save audio recordings for later transcription
+# ---------------------------------------------------------------------------
+
+@app.route(route="voice-memo", methods=["POST"])
+async def voice_memo(req: Request) -> StreamingResponse:
+    """Save voice memo audio to blob storage for later transcription.
+
+    Technicians can record a voice note when flagging an issue.
+    Audio is stored in the knowledge-gaps container for batch processing.
+    """
+    try:
+        form = await req.form()
+        audio = form.get("audio")
+        conv_id = form.get("conversation_id", "")
+        initials = form.get("initials", "")
+
+        if not audio:
+            return StreamingResponse(
+                iter([json.dumps({"error": "No audio file provided"})]),
+                media_type="application/json",
+                status_code=400
+            )
+
+        now = datetime.now(timezone.utc)
+        blob_name = (
+            f"voice-memos/{now.strftime('%Y-%m-%d')}/"
+            f"{now.strftime('%H%M%S')}_{initials}_{conv_id[:8]}.webm"
+        )
+
+        blob_service = get_blob_service_client()
+        container = blob_service.get_container_client("knowledge-gaps")
+
+        # Create container if it doesn't exist (idempotent)
+        try:
+            container.create_container()
+        except Exception:
+            pass  # Already exists
+
+        blob_client = container.get_blob_client(blob_name)
+        audio_data = await audio.read()
+        blob_client.upload_blob(audio_data, overwrite=True)
+
+        logging.info(f"Voice memo saved: {blob_name} ({len(audio_data)} bytes)")
+        return StreamingResponse(
+            iter([json.dumps({"status": "saved", "blob": blob_name})]),
+            media_type="application/json",
+            status_code=201
+        )
+
+    except Exception as e:
+        logging.error(f"Failed to save voice memo: {str(e)}")
+        return StreamingResponse(
+            iter([json.dumps({"error": str(e)})]),
+            media_type="application/json",
             status_code=500
         )

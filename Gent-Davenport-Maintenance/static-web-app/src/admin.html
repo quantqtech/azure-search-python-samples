@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Davenport Feedback Review — Admin</title>
+    <style>
+        :root {
+            --gent-blue: #00528A;
+            --gent-blue-dark: #003d66;
+            --gent-orange: #F3802B;
+            --gent-orange-light: #fde8d9;
+            --aidan-light-green: #E1EFF2;
+            --bg-page: #f0f0f0;
+            --text-primary: #191919;
+            --border-light: #d0d0d0;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: Arial, 'Segoe UI', sans-serif;
+            background: var(--bg-page);
+            color: var(--text-primary);
+            font-size: 16px;
+        }
+
+        header {
+            background: var(--gent-blue);
+            color: white;
+            padding: 1rem 2rem;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+        header h1 { font-size: 22px; }
+        header .subtitle { font-size: 14px; opacity: 0.85; }
+        header a {
+            margin-left: auto;
+            color: white;
+            font-size: 14px;
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            border: 2px solid rgba(255,255,255,0.4);
+            border-radius: 6px;
+        }
+        header a:hover { background: var(--gent-blue-dark); }
+
+        .controls {
+            display: flex;
+            gap: 1rem;
+            padding: 1.25rem 2rem;
+            background: white;
+            border-bottom: 1px solid var(--border-light);
+            align-items: flex-end;
+            flex-wrap: wrap;
+        }
+
+        .controls label { font-size: 14px; color: #555; display: block; margin-bottom: 4px; }
+
+        .controls select, .controls input[type="date"] {
+            padding: 0.5rem 0.75rem;
+            border: 2px solid var(--border-light);
+            border-radius: 6px;
+            font-size: 15px;
+            min-height: 40px;
+        }
+        .controls select:focus, .controls input:focus { outline: none; border-color: var(--gent-orange); }
+
+        .load-btn {
+            padding: 0.5rem 1.5rem;
+            background: var(--gent-blue);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 15px;
+            cursor: pointer;
+            min-height: 40px;
+        }
+        .load-btn:hover { background: var(--gent-blue-dark); }
+
+        .stats-bar {
+            padding: 0.75rem 2rem;
+            font-size: 14px;
+            color: #555;
+            background: var(--aidan-light-green);
+            border-bottom: 1px solid var(--border-light);
+        }
+
+        .content { padding: 1.5rem 2rem; max-width: 1400px; margin: 0 auto; }
+
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: #888;
+            font-size: 18px;
+        }
+
+        /* Feedback cards */
+        .card {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+            margin-bottom: 1.25rem;
+            overflow: hidden;
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 0.75rem 1.25rem;
+            background: #f8f8f8;
+            border-bottom: 1px solid var(--border-light);
+            flex-wrap: wrap;
+        }
+
+        .rating-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        .badge-flagged  { background: #fff3cd; color: #7a5000; }
+        .badge-thumbs_up   { background: #d4edda; color: #1a5c2a; }
+        .badge-thumbs_down { background: #ffe0e0; color: #8b0000; }
+
+        .card-meta { font-size: 13px; color: #777; }
+        .card-meta strong { color: var(--text-primary); }
+
+        .card-body { padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem; }
+
+        .field-label {
+            font-size: 12px;
+            font-weight: 700;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 0.25rem;
+        }
+
+        .question-box {
+            background: var(--gent-blue);
+            color: white;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            font-size: 16px;
+        }
+
+        .response-box {
+            background: var(--aidan-light-green);
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            font-size: 15px;
+            line-height: 1.6;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .response-box.expanded { max-height: none; }
+
+        .notes-box {
+            background: #fff3cd;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            font-size: 15px;
+            font-style: italic;
+            border-left: 4px solid var(--gent-orange);
+        }
+
+        .card-actions {
+            display: flex;
+            gap: 0.75rem;
+            padding: 0.75rem 1.25rem;
+            border-top: 1px solid var(--border-light);
+            background: #fafafa;
+            flex-wrap: wrap;
+        }
+
+        .action-btn {
+            padding: 0.4rem 1rem;
+            border: 2px solid var(--border-light);
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            background: white;
+        }
+        .action-btn:hover { border-color: var(--gent-blue); background: var(--aidan-light-green); }
+        .action-btn.danger { color: #c00; }
+        .action-btn.danger:hover { border-color: #c00; background: #ffe0e0; }
+
+        .spinner {
+            display: inline-block;
+            width: 20px; height: 20px;
+            border: 3px solid #ddd;
+            border-top-color: var(--gent-blue);
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+            margin: 2rem auto;
+            display: block;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        a { color: var(--gent-orange); }
+        a:hover { color: var(--gent-blue); }
+    </style>
+</head>
+<body>
+    <header>
+        <div>
+            <h1>&#128203; Feedback Review</h1>
+            <div class="subtitle">Davenport Support — Admin Panel</div>
+        </div>
+        <a href="index.html">&#8592; Back to Chat</a>
+    </header>
+
+    <div class="controls">
+        <div>
+            <label for="filter-rating">Rating</label>
+            <select id="filter-rating">
+                <option value="flagged">&#9873; Flagged only</option>
+                <option value="thumbs_down">&#128078; Thumbs down</option>
+                <option value="">All feedback</option>
+                <option value="thumbs_up">&#128077; Thumbs up</option>
+            </select>
+        </div>
+        <div>
+            <label for="filter-date">Date (optional)</label>
+            <input type="date" id="filter-date">
+        </div>
+        <button class="load-btn" onclick="loadFeedback()">Load</button>
+    </div>
+
+    <div class="stats-bar" id="stats-bar" style="display:none"></div>
+
+    <div class="content">
+        <div id="feedback-list">
+            <div class="empty-state">Select filters above and click Load to see feedback.</div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'https://func-davenport-api.azurewebsites.net/api';
+
+        // Set today's date as default
+        const today = new Date().toISOString().split('T')[0];
+        document.getElementById('filter-date').value = today;
+
+        const RATING_LABELS = {
+            flagged:     '&#9873; Flagged',
+            thumbs_up:   '&#128077; Helpful',
+            thumbs_down: '&#128078; Not helpful'
+        };
+
+        async function loadFeedback() {
+            const rating = document.getElementById('filter-rating').value;
+            const date   = document.getElementById('filter-date').value;
+
+            const listEl  = document.getElementById('feedback-list');
+            const statsEl = document.getElementById('stats-bar');
+            listEl.innerHTML = '<div class="spinner"></div>';
+            statsEl.style.display = 'none';
+
+            const params = new URLSearchParams();
+            if (rating) params.set('rating', rating);
+            if (date)   params.set('date', date);
+
+            try {
+                const res  = await fetch(`${API_BASE}/feedback?${params}`);
+                const data = await res.json();
+
+                if (!Array.isArray(data) || data.length === 0) {
+                    listEl.innerHTML = '<div class="empty-state">No feedback found for the selected filters.</div>';
+                    return;
+                }
+
+                // Sort newest first
+                data.sort((a, b) => b.id.localeCompare(a.id));
+
+                statsEl.textContent = `${data.length} record${data.length !== 1 ? 's' : ''} found`;
+                statsEl.style.display = 'block';
+
+                listEl.innerHTML = data.map((item, i) => buildCard(item, i)).join('');
+
+            } catch (err) {
+                listEl.innerHTML = `<div class="empty-state" style="color:#c00">Error loading feedback: ${err.message}</div>`;
+            }
+        }
+
+        function buildCard(item, i) {
+            const ratingClass = `badge-${item.rating}`;
+            const ratingLabel = RATING_LABELS[item.rating] || item.rating;
+            const dateStr = item.id ? item.id.replace('T', ' ').substring(0, 15) : item.date;
+            const who = item.initials ? `by <strong>${item.initials}</strong>` : 'anonymous';
+            const mode = item.reasoning_level ? ` &middot; ${item.reasoning_level}` : '';
+
+            const hasNotes = item.notes && item.notes.trim();
+            const notesHtml = hasNotes
+                ? `<div><div class="field-label">Notes from technician</div>
+                   <div class="notes-box">${escHtml(item.notes)}</div></div>`
+                : '';
+
+            // Truncate long responses in the card (expandable)
+            const shortResp = item.response && item.response.length > 400
+                ? item.response.slice(0, 400) + '…'
+                : (item.response || '');
+
+            return `
+                <div class="card" id="card-${i}">
+                    <div class="card-header">
+                        <span class="rating-badge ${ratingClass}">${ratingLabel}</span>
+                        <span class="card-meta">${dateStr} &middot; ${who}${mode}</span>
+                    </div>
+                    <div class="card-body">
+                        <div>
+                            <div class="field-label">Question</div>
+                            <div class="question-box">${escHtml(item.message || '')}</div>
+                        </div>
+                        <div>
+                            <div class="field-label">Response <small style="font-weight:normal;text-transform:none;">(click to expand)</small></div>
+                            <div class="response-box" id="resp-${i}"
+                                 onclick="this.classList.toggle('expanded')"
+                                 style="cursor:pointer">${escHtml(shortResp)}</div>
+                        </div>
+                        ${notesHtml}
+                    </div>
+                    <div class="card-actions">
+                        <button class="action-btn" onclick="copyToClipboard('${escHtml(item.message || '')}', '${escHtml(item.response || '')}')">
+                            &#128203; Copy Q&amp;A
+                        </button>
+                        <a href="index.html" target="_blank" class="action-btn" style="text-decoration:none">
+                            &#128172; Open Chat
+                        </a>
+                    </div>
+                </div>`;
+        }
+
+        function escHtml(str) {
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function copyToClipboard(question, response) {
+            const text = `Q: ${question}\n\nA: ${response}`;
+            navigator.clipboard.writeText(text).then(() => {
+                alert('Copied to clipboard — paste into your knowledge gap doc.');
+            });
+        }
+
+        // Auto-load on page open
+        loadFeedback();
+    </script>
+</body>
+</html>

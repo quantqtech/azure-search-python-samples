@@ -466,6 +466,127 @@
         .timing-item strong {
             color: #c44;
         }
+
+        /* Streaming cursor shown while response is building */
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
+        }
+        .streaming-cursor {
+            display: inline-block;
+            width: 2px;
+            height: 1.2em;
+            background: var(--gent-blue);
+            margin-left: 2px;
+            vertical-align: text-bottom;
+            animation: blink 0.8s infinite;
+        }
+
+        /* Status text shown during search/generation phases */
+        .stream-status {
+            color: #888;
+            font-size: var(--font-small);
+            font-style: italic;
+            margin-bottom: 0.25rem;
+        }
+
+        /* Feedback bar below each assistant response */
+        .feedback-bar {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid rgba(0,0,0,0.1);
+            flex-wrap: wrap;
+        }
+
+        .feedback-btn {
+            background: white;
+            border: 2px solid var(--border-light);
+            border-radius: 6px;
+            padding: 0.4rem 0.75rem;
+            font-size: 1.1rem;
+            cursor: pointer;
+            min-height: 40px;
+            transition: all 0.15s;
+            line-height: 1;
+        }
+        .feedback-btn:hover { border-color: var(--gent-blue); background: var(--aidan-light-green); }
+        .feedback-btn.active-good { background: #d4edda; border-color: #2e7d32; }
+        .feedback-btn.active-bad  { background: #ffe0e0; border-color: #c44; }
+        .feedback-btn.active-flag { background: #fff3cd; border-color: #f9a825; }
+        .feedback-btn.mic-recording { background: #ffe0e0; border-color: #c44; animation: blink 0.8s infinite; }
+
+        .feedback-initials {
+            width: 52px;
+            padding: 0.4rem 0.5rem;
+            border: 2px solid var(--border-light);
+            border-radius: 6px;
+            font-size: var(--font-small);
+            text-align: center;
+            text-transform: uppercase;
+            min-height: 40px;
+        }
+        .feedback-initials:focus { outline: none; border-color: var(--gent-orange); }
+
+        /* Expandable notes field when flagging */
+        .flag-notes {
+            display: none;
+            width: 100%;
+            margin-top: 0.5rem;
+            gap: 0.5rem;
+        }
+        .flag-notes.open { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+        .flag-notes textarea {
+            flex: 1;
+            min-width: 200px;
+            padding: 0.5rem 0.75rem;
+            border: 2px solid var(--border-light);
+            border-radius: 6px;
+            font-size: var(--font-small);
+            font-family: inherit;
+            resize: vertical;
+            min-height: 56px;
+        }
+        .flag-notes textarea:focus { outline: none; border-color: var(--gent-orange); }
+        .flag-submit-btn {
+            padding: 0.5rem 1rem;
+            background: var(--gent-orange);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: var(--font-small);
+            font-weight: 600;
+            min-height: 48px;
+            align-self: flex-end;
+        }
+        .flag-submit-btn:hover { background: #d96e1e; }
+        .feedback-saved-msg {
+            font-size: var(--font-small);
+            color: #2e7d32;
+            font-style: italic;
+        }
+
+        /* Initials input in header */
+        .initials-input {
+            width: 60px;
+            padding: 0.4rem 0.5rem;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 6px;
+            background: var(--gent-blue-dark);
+            color: white;
+            font-size: var(--font-small);
+            text-align: center;
+            text-transform: uppercase;
+        }
+        .initials-input::placeholder { color: rgba(255,255,255,0.6); }
+        .initials-input:focus { outline: none; border-color: var(--gent-orange); }
+        .initials-label {
+            font-size: var(--font-small);
+            opacity: 0.85;
+        }
     </style>
 </head>
 <body>
@@ -485,6 +606,10 @@
                     <option value="balanced">Balanced (~20s)</option>
                     <option value="thorough" selected>Thorough (~45s)</option>
                 </select>
+                <span class="initials-label">Your initials:</span>
+                <input type="text" id="user-initials" class="initials-input"
+                       placeholder="e.g. DL" maxlength="4"
+                       title="Enter your initials to track your feedback">
             </div>
             <div class="powered-by">
                 Powered by <img src="images/Aidan-Logo_White.png" alt="Aidan"> <span>aidan</span> systems
@@ -540,179 +665,388 @@
         const clearBtn = document.getElementById('clear-btn');
         const reasoningSelect = document.getElementById('reasoning-level');
         const sidebarEl = document.getElementById('sidebar');
+        const initialsInput = document.getElementById('user-initials');
 
-        // Store conversation ID
+        const API_BASE = 'https://func-davenport-api.azurewebsites.net/api';
+
+        // Conversation state
         let conversationId = null;
 
-        // Toggle sidebar visibility
+        // Message history for feedback submission: [{message, response, reasoning_level}]
+        let messageHistory = [];
+
+        // Restore initials from localStorage (persists across sessions)
+        initialsInput.value = localStorage.getItem('davenport_initials') || '';
+        initialsInput.addEventListener('change', () => {
+            localStorage.setItem('davenport_initials', initialsInput.value.toUpperCase());
+            initialsInput.value = initialsInput.value.toUpperCase();
+        });
+
+        // Active voice recorder (if recording)
+        let activeRecorder = null;
+
+        // ---------------------------------------------------------------
+        // Sidebar toggle
+        // ---------------------------------------------------------------
         function toggleSidebar() {
             sidebarEl.classList.toggle('open');
         }
 
-        // Clear chat function
+        // ---------------------------------------------------------------
+        // Clear chat
+        // ---------------------------------------------------------------
         function clearChat() {
             messagesEl.innerHTML = `<div class="message assistant">
                 Welcome to Gent Machine Davenport support. Ask about troubleshooting, maintenance, or operation of your Model B machine.
             </div>`;
             conversationId = null;
+            messageHistory = [];
             inputEl.focus();
         }
-
         clearBtn.addEventListener('click', clearChat);
 
-        function addMessage(content, role, trace = null) {
-            const div = document.createElement('div');
-            div.className = `message ${role}`;
-            // Markdown formatting for assistant messages
-            if (role === 'assistant') {
-                // Convert markdown links first (before other transformations)
-                content = content.replace(/\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
-
-                // Handle inline code
-                content = content.replace(/`([^`]+)`/g, '<code>$1</code>');
-
-                // Handle bold
-                content = content.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-
-                // Convert numbered lists - look for "1) text" or "1. text" patterns
-                // Only trigger if content starts with "1" followed by ) or .
-                const startsWithNumber = /^1[).]\s/.test(content.trim());
-                if (startsWithNumber) {
-                    // Split on patterns like ") 2)" or ". 3." to find list boundaries
-                    const items = content.split(/[).]\s*(?=\d{1,2}[).]\s)/);
-                    if (items.length > 1) {
-                        content = '<ol>' + items.map(item => {
-                            // Remove leading number and delimiter
-                            const cleaned = item.replace(/^\d{1,2}[).]\s*/, '').trim();
-                            return cleaned ? '<li>' + cleaned + '</li>' : '';
-                        }).filter(x => x).join('') + '</ol>';
-                    }
+        // ---------------------------------------------------------------
+        // Markdown formatting — shared between initial render and streaming
+        // ---------------------------------------------------------------
+        function formatMarkdown(text) {
+            // Links first (before other transforms that might corrupt URLs)
+            text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+            // Bold
+            text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+            // Inline code
+            text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+            // Numbered lists (e.g. "1. item\n2. item")
+            const startsWithNumber = /^1[).]\s/.test(text.trim());
+            if (startsWithNumber) {
+                const items = text.split(/[).]\s*(?=\d{1,2}[).]\s)/);
+                if (items.length > 1) {
+                    text = '<ol>' + items.map(item => {
+                        const cleaned = item.replace(/^\d{1,2}[).]\s*/, '').trim();
+                        return cleaned ? '<li>' + cleaned + '</li>' : '';
+                    }).filter(x => x).join('') + '</ol>';
+                    return text;
                 }
-
-                // Handle bullet lists with newlines
-                content = content.replace(/\n- /g, '</li><li>');
-
-                // Handle paragraphs
-                content = content.replace(/\n\n/g, '</p><p>');
             }
-            div.innerHTML = content;
+            // Bullet lists
+            text = text.replace(/\n- /g, '</li><li>');
+            // Paragraphs
+            text = text.replace(/\n\n/g, '</p><p>');
+            return text;
+        }
 
-            // Add trace panel if available
-            if (trace && (trace.query_intents?.length > 0 || trace.timings)) {
-                const traceId = 'trace-' + Date.now();
-                const t = trace.timings || {};
-                const duration = t.total ? (t.total / 1000).toFixed(1) + 's' : '?';
-                const traceHtml = `
-                    <div class="trace-panel">
-                        <button class="trace-toggle" onclick="toggleTrace('${traceId}')">
-                            &#9654; ${duration} &middot; ${trace.query_intents?.length || 0} sub-queries
-                        </button>
-                        <div id="${traceId}" class="trace-content">
-                            <div class="label">Agent: ${trace.agent || 'unknown'}</div>
-                            <div class="label">Timing breakdown:</div>
-                            <div class="timing-bar">
-                                ${t.client_init ? `<span class="timing-item">Init: ${t.client_init}ms</span>` : ''}
-                                ${t.conversation_create ? `<span class="timing-item">Conv: ${t.conversation_create}ms</span>` : ''}
-                                ${t.agent_response ? `<span class="timing-item"><strong>Agent: ${(t.agent_response/1000).toFixed(1)}s</strong></span>` : ''}
-                            </div>
-                            ${trace.query_intents?.length > 0 ? `
-                            <div class="label">Query decomposition:</div>
-                            <ul class="intents">
-                                ${trace.query_intents.map(q => `<li>${q}</li>`).join('')}
-                            </ul>
-                            ` : ''}
-                            <div class="stats">
-                                Sources: ${trace.sources_found || 0} |
-                                Tokens: ${trace.tokens?.total || 0}
-                            </div>
+        // ---------------------------------------------------------------
+        // Trace panel (collapsible debug info below each response)
+        // ---------------------------------------------------------------
+        function buildTraceHtml(trace) {
+            if (!trace || (!trace.query_intents?.length && !trace.timings)) return '';
+            const traceId = 'trace-' + Date.now();
+            const t = trace.timings || {};
+            const duration = t.total ? (t.total / 1000).toFixed(1) + 's' : '?';
+            return `
+                <div class="trace-panel">
+                    <button class="trace-toggle" onclick="toggleTrace('${traceId}')">
+                        &#9654; ${duration} &middot; ${trace.query_intents?.length || 0} sub-queries
+                    </button>
+                    <div id="${traceId}" class="trace-content">
+                        <div class="label">Agent: ${trace.agent || 'unknown'}</div>
+                        ${trace.timings ? `
+                        <div class="label">Timing:</div>
+                        <div class="timing-bar">
+                            ${t.total ? `<span class="timing-item"><strong>Total: ${(t.total/1000).toFixed(1)}s</strong></span>` : ''}
+                        </div>` : ''}
+                        ${trace.query_intents?.length > 0 ? `
+                        <div class="label">Query decomposition:</div>
+                        <ul class="intents">
+                            ${trace.query_intents.map(q => `<li>${q}</li>`).join('')}
+                        </ul>` : ''}
+                        <div class="stats">
+                            Sources: ${trace.sources_found || 0} |
+                            Tokens: ${trace.tokens?.total || 0}
                         </div>
                     </div>
-                `;
-                div.innerHTML += traceHtml;
-            }
-
-            messagesEl.appendChild(div);
-            messagesEl.scrollTop = messagesEl.scrollHeight;
+                </div>`;
         }
 
         function toggleTrace(id) {
             const el = document.getElementById(id);
             const btn = el.previousElementSibling;
-            if (el.classList.contains('open')) {
-                el.classList.remove('open');
-                btn.innerHTML = btn.innerHTML.replace('&#9660;', '&#9654;');
+            el.classList.toggle('open');
+            btn.innerHTML = el.classList.contains('open')
+                ? btn.innerHTML.replace('&#9654;', '&#9660;')
+                : btn.innerHTML.replace('&#9660;', '&#9654;');
+        }
+
+        // ---------------------------------------------------------------
+        // Feedback bar (added below each assistant response)
+        // ---------------------------------------------------------------
+        function buildFeedbackBar(msgIndex) {
+            return `
+                <div class="feedback-bar" id="fb-bar-${msgIndex}">
+                    <button class="feedback-btn" id="fb-up-${msgIndex}"
+                        onclick="submitFeedback(${msgIndex}, 'thumbs_up')" title="Helpful">&#128077;</button>
+                    <button class="feedback-btn" id="fb-down-${msgIndex}"
+                        onclick="submitFeedback(${msgIndex}, 'thumbs_down')" title="Not helpful">&#128078;</button>
+                    <button class="feedback-btn" id="fb-flag-${msgIndex}"
+                        onclick="toggleFlagNotes(${msgIndex})" title="Flag for review">&#9873; Flag</button>
+                    <button class="feedback-btn" id="fb-mic-${msgIndex}"
+                        onclick="toggleVoiceMemo(${msgIndex})" title="Record voice note">&#127908;</button>
+                    <input type="text" class="feedback-initials" id="fb-init-${msgIndex}"
+                        placeholder="Initials" maxlength="4"
+                        value="${initialsInput.value}"
+                        title="Your initials (optional)">
+                    <span class="feedback-saved-msg" id="fb-saved-${msgIndex}" style="display:none"></span>
+                </div>
+                <div class="flag-notes" id="flag-notes-${msgIndex}">
+                    <textarea id="flag-text-${msgIndex}"
+                        placeholder="What was missing or wrong? (optional)"></textarea>
+                    <button class="flag-submit-btn" onclick="submitFlag(${msgIndex})">Submit Flag</button>
+                </div>`;
+        }
+
+        function showFeedbackSaved(msgIndex, text) {
+            const el = document.getElementById(`fb-saved-${msgIndex}`);
+            if (el) { el.textContent = text; el.style.display = 'inline'; }
+        }
+
+        function submitFeedback(msgIndex, rating) {
+            const msg = messageHistory[msgIndex];
+            if (!msg) return;
+            const initials = document.getElementById(`fb-init-${msgIndex}`)?.value
+                || initialsInput.value;
+
+            fetch(`${API_BASE}/feedback`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    conversation_id: conversationId,
+                    message: msg.message,
+                    response: msg.response,
+                    rating,
+                    initials,
+                    reasoning_level: msg.reasoning_level,
+                    notes: ''
+                })
+            }).catch(err => console.error('Feedback error:', err));
+
+            // Visual confirmation
+            document.getElementById(`fb-up-${msgIndex}`)?.classList.remove('active-good');
+            document.getElementById(`fb-down-${msgIndex}`)?.classList.remove('active-bad');
+            if (rating === 'thumbs_up') {
+                document.getElementById(`fb-up-${msgIndex}`)?.classList.add('active-good');
+                showFeedbackSaved(msgIndex, '✓ Thanks!');
             } else {
-                el.classList.add('open');
-                btn.innerHTML = btn.innerHTML.replace('&#9654;', '&#9660;');
+                document.getElementById(`fb-down-${msgIndex}`)?.classList.add('active-bad');
+                showFeedbackSaved(msgIndex, '✓ Noted');
             }
         }
 
-        function showLoading() {
-            const mode = reasoningSelect.options[reasoningSelect.selectedIndex].text;
+        function toggleFlagNotes(msgIndex) {
+            const notes = document.getElementById(`flag-notes-${msgIndex}`);
+            const btn = document.getElementById(`fb-flag-${msgIndex}`);
+            if (notes) {
+                notes.classList.toggle('open');
+                btn?.classList.toggle('active-flag');
+            }
+        }
+
+        function submitFlag(msgIndex) {
+            const msg = messageHistory[msgIndex];
+            if (!msg) return;
+            const notes = document.getElementById(`flag-text-${msgIndex}`)?.value || '';
+            const initials = document.getElementById(`fb-init-${msgIndex}`)?.value
+                || initialsInput.value;
+
+            fetch(`${API_BASE}/feedback`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    conversation_id: conversationId,
+                    message: msg.message,
+                    response: msg.response,
+                    rating: 'flagged',
+                    initials,
+                    reasoning_level: msg.reasoning_level,
+                    notes
+                })
+            }).catch(err => console.error('Flag error:', err));
+
+            document.getElementById(`flag-notes-${msgIndex}`)?.classList.remove('open');
+            document.getElementById(`fb-flag-${msgIndex}`)?.classList.add('active-flag');
+            showFeedbackSaved(msgIndex, '✓ Flagged for review');
+        }
+
+        // ---------------------------------------------------------------
+        // Voice memo recording
+        // ---------------------------------------------------------------
+        async function toggleVoiceMemo(msgIndex) {
+            const btn = document.getElementById(`fb-mic-${msgIndex}`);
+            if (activeRecorder && activeRecorder.state === 'recording') {
+                activeRecorder.stop();
+                activeRecorder = null;
+                btn?.classList.remove('mic-recording');
+                btn.textContent = '🎙';
+                return;
+            }
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+                const chunks = [];
+                recorder.ondataavailable = e => chunks.push(e.data);
+                recorder.onstop = async () => {
+                    stream.getTracks().forEach(t => t.stop());
+                    const blob = new Blob(chunks, { type: 'audio/webm' });
+                    const form = new FormData();
+                    form.append('audio', blob, 'memo.webm');
+                    form.append('conversation_id', conversationId || '');
+                    form.append('initials', initialsInput.value);
+                    try {
+                        await fetch(`${API_BASE}/voice-memo`, { method: 'POST', body: form });
+                        showFeedbackSaved(msgIndex, '✓ Voice note saved');
+                    } catch (err) {
+                        console.error('Voice memo upload error:', err);
+                    }
+                };
+                recorder.start();
+                activeRecorder = recorder;
+                btn?.classList.add('mic-recording');
+                btn.textContent = '⏹ Stop';
+                // Auto-stop after 90 seconds
+                setTimeout(() => {
+                    if (activeRecorder && activeRecorder.state === 'recording') {
+                        activeRecorder.stop();
+                        activeRecorder = null;
+                        btn?.classList.remove('mic-recording');
+                        btn.textContent = '🎙';
+                    }
+                }, 90000);
+            } catch (err) {
+                alert('Microphone not available: ' + err.message);
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // User message display
+        // ---------------------------------------------------------------
+        function addUserMessage(content) {
             const div = document.createElement('div');
-            div.className = 'message assistant loading';
-            div.id = 'loading-message';
-            div.innerHTML = `
-                <div class="loading-dots">
-                    <span></span><span></span><span></span>
-                </div>
-                <span>Searching (${mode})...</span>
-            `;
+            div.className = 'message user';
+            div.textContent = content;
             messagesEl.appendChild(div);
             messagesEl.scrollTop = messagesEl.scrollHeight;
         }
 
-        function hideLoading() {
-            const loading = document.getElementById('loading-message');
-            if (loading) loading.remove();
-        }
-
+        // ---------------------------------------------------------------
+        // Streaming send — main path
+        // ---------------------------------------------------------------
         async function sendMessage() {
             const message = inputEl.value.trim();
             if (!message) return;
 
             inputEl.value = '';
             sendBtn.disabled = true;
-            addMessage(message, 'user');
-            showLoading();
+            addUserMessage(message);
+
+            const reasoningLevel = reasoningSelect.value;
+            const msgIndex = messageHistory.length;
+
+            // Create the assistant message div — we'll stream into it
+            const assistantDiv = document.createElement('div');
+            assistantDiv.className = 'message assistant';
+            assistantDiv.innerHTML =
+                '<div class="stream-status">Searching knowledge base...</div>' +
+                '<span class="streaming-cursor"></span>';
+            messagesEl.appendChild(assistantDiv);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+
+            let rawText = '';
 
             try {
-                const reasoningLevel = reasoningSelect.value;
-                const response = await fetch('https://func-davenport-api.azurewebsites.net/api/chat', {
+                const response = await fetch(`${API_BASE}/chat/stream`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        message,
-                        conversation_id: conversationId,
-                        reasoning_level: reasoningLevel
-                    })
+                    body: JSON.stringify({ message, conversation_id: conversationId, reasoning_level: reasoningLevel })
                 });
 
-                const data = await response.json();
-                hideLoading();
-
-                if (data.error) {
-                    addMessage(`Error: ${data.error}`, 'assistant');
-                } else {
-                    conversationId = data.conversation_id;
-                    addMessage(data.response, 'assistant', data.trace);
+                if (!response.ok) {
+                    // Non-2xx — fall back to reading body as text
+                    throw new Error(`Server error: ${response.status}`);
                 }
-            } catch (error) {
-                hideLoading();
-                addMessage(`Error: ${error.message}`, 'assistant');
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    // SSE lines are separated by double-newline
+                    const parts = buffer.split('\n\n');
+                    buffer = parts.pop(); // last part may be incomplete
+
+                    for (const part of parts) {
+                        const line = part.trim();
+                        if (!line.startsWith('data: ')) continue;
+                        let data;
+                        try { data = JSON.parse(line.slice(6)); } catch { continue; }
+
+                        if (data.type === 'session') {
+                            conversationId = data.conversation_id;
+
+                        } else if (data.type === 'status') {
+                            // Show status while search / generation is running
+                            assistantDiv.innerHTML =
+                                `<div class="stream-status">${data.text}</div>` +
+                                '<span class="streaming-cursor"></span>';
+
+                        } else if (data.type === 'delta') {
+                            // Token arrived — render progressively
+                            rawText += data.text;
+                            assistantDiv.innerHTML =
+                                formatMarkdown(rawText) +
+                                '<span class="streaming-cursor"></span>';
+                            messagesEl.scrollTop = messagesEl.scrollHeight;
+
+                        } else if (data.type === 'done') {
+                            // Final render with YouTube URLs already transformed
+                            assistantDiv.innerHTML = formatMarkdown(data.full_text);
+                            // Append trace + feedback bar
+                            assistantDiv.innerHTML +=
+                                buildTraceHtml(data.trace) +
+                                buildFeedbackBar(msgIndex);
+                            // Save to history for feedback submission
+                            messageHistory.push({
+                                message,
+                                response: data.full_text,
+                                reasoning_level: reasoningLevel
+                            });
+                            messagesEl.scrollTop = messagesEl.scrollHeight;
+
+                        } else if (data.type === 'error') {
+                            assistantDiv.innerHTML = `<strong>Error:</strong> ${data.text}`;
+                        }
+                    }
+                }
+
+            } catch (err) {
+                assistantDiv.innerHTML = `<strong>Error:</strong> ${err.message}`;
             }
 
             sendBtn.disabled = false;
             inputEl.focus();
         }
 
+        // ---------------------------------------------------------------
+        // Sidebar example questions
+        // ---------------------------------------------------------------
         function askQuestion(question) {
             inputEl.value = question;
             sendMessage();
         }
 
         sendBtn.addEventListener('click', sendMessage);
-        inputEl.addEventListener('keypress', (e) => {
+        inputEl.addEventListener('keypress', e => {
             if (e.key === 'Enter') sendMessage();
         });
 
