@@ -895,12 +895,16 @@
                 recorder.onstop = async () => {
                     stream.getTracks().forEach(t => t.stop());
                     const blob = new Blob(chunks, { type: 'audio/webm' });
-                    const form = new FormData();
-                    form.append('audio', blob, 'memo.webm');
-                    form.append('conversation_id', conversationId || '');
-                    form.append('initials', initialsInput.value);
+                    const params = new URLSearchParams({
+                        conversation_id: conversationId || '',
+                        initials: initialsInput.value
+                    });
                     try {
-                        await fetch(`${API_BASE}/voice-memo`, { method: 'POST', body: form });
+                        await fetch(`${API_BASE}/voice-memo?${params}`, {
+                            method: 'POST',
+                            body: blob,
+                            headers: { 'Content-Type': 'audio/webm' }
+                        });
                         showFeedbackSaved(msgIndex, '✓ Voice note saved');
                     } catch (err) {
                         console.error('Voice memo upload error:', err);

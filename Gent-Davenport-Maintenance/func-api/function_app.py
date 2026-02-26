@@ -13,7 +13,6 @@ from datetime import datetime, timezone
 import azure.functions as func
 from azure.identity import DefaultAzureCredential
 from azure.ai.projects import AIProjectClient
-from azurefunctions.extensions.http.fastapi import Request, StreamingResponse
 
 # Storage config for video links
 STORAGE_ACCOUNT = "stj6lw7vswhnnhw"
@@ -306,22 +305,35 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
 # ---------------------------------------------------------------------------
 
 @app.route(route="chat/stream", methods=["POST"])
-async def chat_stream(req: Request) -> StreamingResponse:
+def chat_stream(req: func.HttpRequest) -> func.HttpResponse:
     """Streaming chat endpoint using Server-Sent Events.
 
     Sends tokens as they arrive from the agent, so the user sees
     the response building progressively instead of waiting 30-45s.
+
+    Uses azurefunctions-extensions-http-fastapi for streaming support.
+    Falls back gracefully to an error if the extension is unavailable.
     """
-    body = await req.json()
+    try:
+        from azurefunctions.extensions.http.fastapi import StreamingResponse
+    except ImportError:
+        return func.HttpResponse(
+            json.dumps({"error": "Streaming not available — azurefunctions-extensions-http-fastapi not installed"}),
+            mimetype="application/json", status_code=501
+        )
+
+    try:
+        body = req.get_json()
+    except ValueError:
+        body = {}
     message = body.get("message")
     conversation_id = body.get("conversation_id")
     reasoning_level = body.get("reasoning_level", "thorough")
 
     if not message:
-        return StreamingResponse(
-            iter([f"data: {json.dumps({'type': 'error', 'text': 'Message is required'})}\n\n"]),
-            media_type="text/event-stream",
-            status_code=400
+        return func.HttpResponse(
+            json.dumps({"error": "Message is required"}),
+            mimetype="application/json", status_code=400
         )
 
     agent_name = AGENTS.get(reasoning_level, DEFAULT_AGENT)
@@ -525,23 +537,24 @@ def get_feedback(req: func.HttpRequest) -> func.HttpResponse:
 # ---------------------------------------------------------------------------
 
 @app.route(route="voice-memo", methods=["POST"])
-async def voice_memo(req: Request) -> StreamingResponse:
+def voice_memo(req: func.HttpRequest) -> func.HttpResponse:
     """Save voice memo audio to blob storage for later transcription.
 
     Technicians can record a voice note when flagging an issue.
     Audio is stored in the knowledge-gaps container for batch processing.
+
+    Expects raw audio bytes in the request body.
+    Query params: conversation_id, initials
     """
     try:
-        form = await req.form()
-        audio = form.get("audio")
-        conv_id = form.get("conversation_id", "")
-        initials = form.get("initials", "")
+        audio_data = req.get_body()
+        conv_id = req.params.get("conversation_id", "")
+        initials = req.params.get("initials", "")
 
-        if not audio:
-            return StreamingResponse(
-                iter([json.dumps({"error": "No audio file provided"})]),
-                media_type="application/json",
-                status_code=400
+        if not audio_data:
+            return func.HttpResponse(
+                json.dumps({"error": "No audio data in request body"}),
+                mimetype="application/json", status_code=400
             )
 
         now = datetime.now(timezone.utc)
@@ -559,21 +572,17 @@ async def voice_memo(req: Request) -> StreamingResponse:
         except Exception:
             pass  # Already exists
 
-        blob_client = container.get_blob_client(blob_name)
-        audio_data = await audio.read()
-        blob_client.upload_blob(audio_data, overwrite=True)
+        container.get_blob_client(blob_name).upload_blob(audio_data, overwrite=True)
 
         logging.info(f"Voice memo saved: {blob_name} ({len(audio_data)} bytes)")
-        return StreamingResponse(
-            iter([json.dumps({"status": "saved", "blob": blob_name})]),
-            media_type="application/json",
-            status_code=201
+        return func.HttpResponse(
+            json.dumps({"status": "saved", "blob": blob_name}),
+            mimetype="application/json", status_code=201
         )
 
     except Exception as e:
         logging.error(f"Failed to save voice memo: {str(e)}")
-        return StreamingResponse(
-            iter([json.dumps({"error": str(e)})]),
-            media_type="application/json",
-            status_code=500
+        return func.HttpResponse(
+            json.dumps({"error": str(e)}),
+            mimetype="application/json", status_code=500
         )

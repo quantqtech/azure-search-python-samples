@@ -2,6 +2,5 @@ azure-functions
 azure-identity
 azure-ai-projects==2.0.0b1
 openai
-azurefunctions-extensions-http-fastapi
 azure-data-tables
 azure-storage-blob
