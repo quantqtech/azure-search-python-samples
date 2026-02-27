@@ -13,6 +13,14 @@ Conversational technical support system for Davenport Model B screw machines. Sh
 
 ## Architecture Decisions
 
+### Decision 5: Direct azure_ai_search Tool with Unified Index (V1 — Feb 2026)
+- **Context**: Foundry MCP knowledge base pipeline took 43-49s per query (confirmed via trace analysis). Total response time was 85-95s — too slow for shop floor use.
+- **Decision**: Merge all 5 ks-azureblob-* indexes into one `davenport-kb-unified` index. Wire agents to use a single `azure_ai_search` direct tool instead of MCP.
+- **Rationale**: Direct azure_ai_search calls take ~0.5-2s vs 43-49s for MCP. The MCP pipeline's multi-pass retrieval, vectorization, and citation generation are designed for quality but too slow. BM25 simple search is fast and sufficient for keyword-based shop floor queries.
+- **Trade-offs**: Loses Foundry IQ's semantic reranking and multi-pass retrieval. Gains ~3x speed improvement (85-95s → ~30s). The 3-mode selector (fast/balanced/thorough) is meaningless with direct search since speed is now dominated by LLM answer generation, not retrieval — so new SWA (`static-web-app-direct/`) removes it.
+- **Result**: `davenport-kb-unified` (1,241 docs across 5 categories), `davenport-direct-v1` agent, `static-web-app-direct/` parallel front-end.
+- **Measured timings**: Search 0.5-2s | LLM answer generation ~21-25s (6,700 tokens) | Total ~30s.
+
 ### Decision 1: Azure AI Search Agentic Retrieval (Foundry IQ)
 - **Context**: Need to search across multiple document collections with intelligent query planning.
 - **Decision**: Use Foundry's agentic retrieval — knowledge sources, knowledge bases, and MCP-connected agents.
@@ -39,6 +47,38 @@ Conversational technical support system for Davenport Model B screw machines. Sh
 
 ## Component Overview
 
+### V1 Architecture (Current — Direct Search)
+```
+  static-web-app-direct/    static-web-app/ (original — kept running)
+  (no mode selector)         (fast/balanced/thorough selector)
+         │                            │
+         └────────────┬───────────────┘
+                      │
+             ┌────────▼────────┐
+             │  Azure Function │
+             │  (func-api/)    │
+             └────────┬────────┘
+                      │ reasoning_level="direct" → davenport-direct-v1
+                      │ reasoning_level="balanced" → davenport-balanced (MCP, legacy)
+                      │
+      ┌───────────────┴──────────────────┐
+      │                                  │
+┌─────▼──────────────────┐   ┌───────────▼──────────────────┐
+│  davenport-direct-v1   │   │  davenport-fast/balanced/    │
+│  azure_ai_search tool  │   │  assistant (MCP tool, legacy)│
+│  davenport-kb-unified  │   │  davenport-machine-kb        │
+│  BM25 simple, ~30s     │   │  Multi-pass retrieval, ~85s  │
+└─────┬──────────────────┘   └──────────────────────────────┘
+      │
+┌─────▼────────────────────────────────────────────┐
+│  davenport-kb-unified (1,241 docs)               │
+│  Merged from 5 ks-azureblob-* indexes            │
+│  Fields: chunk_id, snippet, blob_url,            │
+│          snippet_parent_id, source_type, category│
+└──────────────────────────────────────────────────┘
+```
+
+### Original V0 Architecture (Reference)
 ```
                     ┌──────────────────────────┐
                     │   Streamlit Chat UI      │
@@ -111,6 +151,8 @@ Conversational technical support system for Davenport Model B screw machines. Sh
 - Not designed for public-facing scale — internal tool for a small team
 
 ## Future Considerations
+- **GraphRAG V2**: Build Davenport machine ontology (component→relationship graph) on top of the unified index. Target: better "why?" answers by traversing causal chains (brake loose → index skip → part quality). ~35% improvement on relationship-based troubleshooting questions. See plan file for implementation steps.
+- **Ontology injection (quick win)**: Add machine component relationships to agent system prompt before full GraphRAG — extends the existing jargon glossary to causal relationships, zero infrastructure changes.
+- **Foundry IQ long-term**: When Microsoft resolves MCP latency (currently 43-49s structural), re-evaluate. Foundry IQ provides semantic reranking and multi-pass retrieval that direct BM25 search doesn't.
 - Add OCR skill as complement to ChatCompletionSkill for faster text extraction from scanned PDFs
 - Re-split image-dense PDFs by image count (not just file size) to stay within indexer time limits
-- Update remaining knowledge source skillsets (engineering-tips, technical-tips, troubleshooting, video-training) with corrected deployment names

@@ -4,3 +4,4 @@ azure-ai-projects==2.0.0b1
 openai
 azure-data-tables
 azure-storage-blob
+azurefunctions-extensions-http-fastapi

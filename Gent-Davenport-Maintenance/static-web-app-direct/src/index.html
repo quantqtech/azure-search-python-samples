@@ -606,12 +606,6 @@
         </div>
         <div class="header-right">
             <div class="reasoning-toggle">
-                <label for="reasoning-level">Search depth:</label>
-                <select id="reasoning-level">
-                    <option value="fast">Fast (~40s)</option>
-                    <option value="balanced" selected>Balanced (~55s)</option>
-                    <option value="thorough">Thorough (~2 min)</option>
-                </select>
                 <span class="initials-label">Your initials:</span>
                 <input type="text" id="user-initials" class="initials-input"
                        placeholder="e.g. DL" maxlength="4"
@@ -669,7 +663,7 @@
         const inputEl = document.getElementById('user-input');
         const sendBtn = document.getElementById('send-btn');
         const clearBtn = document.getElementById('clear-btn');
-        const reasoningSelect = document.getElementById('reasoning-level');
+        const REASONING_LEVEL = 'direct'; // always use unified index direct search — no mode selector
         const sidebarEl = document.getElementById('sidebar');
         const initialsInput = document.getElementById('user-initials');
 
@@ -965,7 +959,7 @@
             sendBtn.disabled = true;
             addUserMessage(message);
 
-            const reasoningLevel = reasoningSelect.value;
+            const reasoningLevel = REASONING_LEVEL;
             const msgIndex = messageHistory.length;
 
             // Create the assistant message div — we'll stream into it
