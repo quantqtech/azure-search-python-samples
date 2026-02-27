@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Gent Machine - Davenport Technical Support</title>
+    <!-- vis-network for graph visualization in sidebar -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/standalone/umd/vis-network.min.js"></script>
     <style>
         /* CSS Variables for branding */
         :root {
@@ -344,6 +346,68 @@
             border-color: var(--gent-blue);
         }
 
+        /* Graph visualization panel in sidebar */
+        .graph-panel { display: none; }
+        .graph-panel.active { display: block; }
+        .graph-panel h2 { font-size: var(--font-base); margin-bottom: 0.75rem; color: var(--text-primary); }
+        .graph-canvas {
+            width: 100%;
+            height: 300px;
+            border: 1px solid var(--border-light);
+            border-radius: 8px;
+            background: #fafafa;
+        }
+        .graph-legend {
+            display: flex;
+            gap: 0.75rem;
+            margin-top: 0.5rem;
+            flex-wrap: wrap;
+            font-size: var(--font-small);
+            color: var(--text-secondary);
+        }
+        .graph-legend-item { display: flex; align-items: center; gap: 0.3rem; }
+        .graph-legend-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+        .graph-detail {
+            margin-top: 0.75rem;
+            padding: 0.75rem;
+            background: #f5f5f5;
+            border-radius: 8px;
+            border: 1px solid var(--border-light);
+        }
+        .graph-detail h3 { font-size: var(--font-medium); margin-bottom: 0.25rem; color: var(--text-primary); }
+        .graph-detail p { font-size: var(--font-small); color: var(--text-secondary); line-height: 1.4; }
+        .graph-detail .detail-type {
+            display: inline-block;
+            padding: 0.15rem 0.5rem;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            color: white;
+            margin-bottom: 0.5rem;
+        }
+        .graph-detail .detail-fix {
+            margin-top: 0.5rem;
+            padding: 0.5rem;
+            background: #e8f5e9;
+            border-radius: 6px;
+            font-size: var(--font-small);
+            color: #2e7d32;
+        }
+        .graph-ask-btn {
+            margin-top: 0.75rem;
+            width: 100%;
+            padding: 0.75rem;
+            background: var(--gent-orange);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: var(--font-medium);
+            min-height: var(--touch-min);
+            cursor: pointer;
+            font-weight: 600;
+        }
+        .graph-ask-btn:hover { background: #d96e1e; }
+
         .loading {
             display: flex;
             align-items: center;
@@ -632,7 +696,7 @@
         </div>
 
         <div class="sidebar-container">
-            <button class="sidebar-toggle" onclick="toggleSidebar()">
+            <button class="sidebar-toggle" id="sidebar-toggle" onclick="toggleSidebar()">
                 &#9776; Example Questions
             </button>
             <div class="sidebar" id="sidebar">
@@ -653,6 +717,23 @@
                     <button class="example-btn" onclick="askQuestion('What weekly maintenance should I perform?')">
                         What weekly maintenance should I perform?
                     </button>
+                </div>
+                <!-- Graph visualization panel — shown when a symptom matches -->
+                <div class="graph-panel" id="graph-panel">
+                    <h2>Diagnostic Path</h2>
+                    <div class="graph-canvas" id="graph-canvas"></div>
+                    <div class="graph-legend">
+                        <span class="graph-legend-item"><span class="graph-legend-dot" style="background:#F3802B"></span> Symptom</span>
+                        <span class="graph-legend-item"><span class="graph-legend-dot" style="background:#c44"></span> Cause</span>
+                        <span class="graph-legend-item"><span class="graph-legend-dot" style="background:#00528A"></span> Component</span>
+                    </div>
+                    <div class="graph-detail" id="graph-detail" style="display:none">
+                        <div class="detail-type" id="graph-detail-type"></div>
+                        <h3 id="graph-detail-name"></h3>
+                        <p id="graph-detail-desc"></p>
+                        <div class="detail-fix" id="graph-detail-fix" style="display:none"></div>
+                        <button class="graph-ask-btn" id="graph-ask-btn" style="display:none">Ask about this</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -703,6 +784,7 @@
             conversationId = null;
             turnNumber = 0;
             messageHistory = [];
+            resetGraphPanel();
             inputEl.focus();
         }
         clearBtn.addEventListener('click', clearChat);
@@ -1021,6 +1103,9 @@
                                     formatMarkdown(rawText) +
                                     '<span class="streaming-cursor"></span>';
                                 messagesEl.scrollTop = messagesEl.scrollHeight;
+                            } else if (data.type === 'graph') {
+                                // Graph visualization data — render in sidebar
+                                renderGraphViz(data.data);
                             } else if (data.type === 'done') {
                                 assistantDiv.innerHTML = formatMarkdown(data.full_text);
                                 assistantDiv.innerHTML +=
@@ -1055,6 +1140,8 @@
                         buildFeedbackBar(msgIndex);
                     messageHistory.push({ message, response: data.response, reasoning_level: reasoningLevel, turn_id: data.turn_id || '', turn_number: turnNumber });
                     messagesEl.scrollTop = messagesEl.scrollHeight;
+                    // Show graph visualization if symptom matched
+                    if (data.graph_viz) renderGraphViz(data.graph_viz);
                 }
 
             } catch (err) {
@@ -1063,6 +1150,170 @@
 
             sendBtn.disabled = false;
             inputEl.focus();
+        }
+
+        // ---------------------------------------------------------------
+        // Graph visualization — diagnostic path in sidebar
+        // ---------------------------------------------------------------
+        let graphNetwork = null;
+
+        function renderGraphViz(graphData) {
+            if (!graphData || !graphData.nodes || graphData.nodes.length === 0) return;
+
+            const exampleQuestionsEl = document.querySelector('.example-questions');
+            const graphPanelEl = document.getElementById('graph-panel');
+            const toggleBtn = document.getElementById('sidebar-toggle');
+
+            // Hide example questions, show graph panel
+            if (exampleQuestionsEl) exampleQuestionsEl.style.display = 'none';
+            graphPanelEl.classList.add('active');
+
+            // Update toggle button text and auto-open sidebar
+            toggleBtn.innerHTML = '&#9776; Diagnostic Path';
+            sidebarEl.classList.add('open');
+
+            // Color map for node types
+            const colors = {
+                symptom: { background: '#F3802B', border: '#d96e1e' },
+                cause: { background: '#c44', border: '#a33' },
+                component: { background: '#00528A', border: '#003d66' },
+            };
+
+            // Build vis.js nodes
+            const nodes = new vis.DataSet(graphData.nodes.map(n => ({
+                id: n.id,
+                label: wordWrap(n.name, 20),
+                color: colors[n.type] || colors.component,
+                font: { color: 'white', size: 13, multi: 'html' },
+                shape: 'box',
+                margin: { top: 6, bottom: 6, left: 8, right: 8 },
+                borderWidth: 2,
+                widthConstraint: { maximum: 180 },
+                _data: n,  // store full data for detail panel
+            })));
+
+            // Build vis.js edges
+            const edges = new vis.DataSet(graphData.edges.map((e, i) => ({
+                id: 'e' + i,
+                from: e.from_id,
+                to: e.to_id,
+                label: e.priority ? 'P' + e.priority : '',
+                arrows: 'to',
+                color: { color: '#999', highlight: '#666' },
+                font: { size: 10, color: '#888' },
+                smooth: { type: 'cubicBezier' },
+            })));
+
+            // Render the graph with hierarchical layout (symptom → causes → components)
+            const container = document.getElementById('graph-canvas');
+            graphNetwork = new vis.Network(container, { nodes, edges }, {
+                layout: {
+                    hierarchical: {
+                        direction: 'UD',
+                        sortMethod: 'directed',
+                        levelSeparation: 80,
+                        nodeSpacing: 120,
+                    }
+                },
+                physics: false,
+                interaction: { zoomView: true, dragView: true, hover: true },
+            });
+
+            // Fit all nodes into view after rendering
+            graphNetwork.once('afterDrawing', () => graphNetwork.fit({ animation: false }));
+
+            // Click a node → show detail panel
+            graphNetwork.on('click', function(params) {
+                if (params.nodes.length > 0) {
+                    const nodeId = params.nodes[0];
+                    const node = nodes.get(nodeId);
+                    if (node && node._data) showGraphDetail(node._data);
+                } else {
+                    document.getElementById('graph-detail').style.display = 'none';
+                }
+            });
+        }
+
+        function showGraphDetail(nodeData) {
+            const detailEl = document.getElementById('graph-detail');
+            const typeEl = document.getElementById('graph-detail-type');
+            const nameEl = document.getElementById('graph-detail-name');
+            const descEl = document.getElementById('graph-detail-desc');
+            const fixEl = document.getElementById('graph-detail-fix');
+            const askBtn = document.getElementById('graph-ask-btn');
+
+            detailEl.style.display = 'block';
+
+            // Type badge
+            const typeColors = { symptom: '#F3802B', cause: '#c44', component: '#00528A' };
+            typeEl.textContent = (nodeData.type || '').charAt(0).toUpperCase() + (nodeData.type || '').slice(1);
+            typeEl.style.background = typeColors[nodeData.type] || '#666';
+
+            // Name and description
+            nameEl.textContent = nodeData.name || nodeData.id;
+            descEl.textContent = nodeData.description || '';
+
+            // Fix suggestion (for cause nodes)
+            if (nodeData.fix_desc) {
+                fixEl.style.display = 'block';
+                fixEl.textContent = 'Fix: ' + nodeData.fix_desc;
+            } else {
+                fixEl.style.display = 'none';
+            }
+
+            // "Ask about this" button — components and symptoms get different questions
+            if (nodeData.type === 'component') {
+                askBtn.style.display = 'block';
+                askBtn.textContent = 'Ask about ' + nodeData.name;
+                askBtn.onclick = () => {
+                    inputEl.value = 'Tell me about the ' + nodeData.name + ' on the Davenport';
+                    sendMessage();
+                };
+            } else if (nodeData.type === 'symptom') {
+                askBtn.style.display = 'block';
+                askBtn.textContent = 'Troubleshoot this';
+                askBtn.onclick = () => {
+                    inputEl.value = 'I\'m seeing ' + nodeData.name + ' - what should I check?';
+                    sendMessage();
+                };
+            } else {
+                askBtn.style.display = 'none';
+            }
+        }
+
+        function resetGraphPanel() {
+            // Reset sidebar to example questions (called on clear chat)
+            const graphPanelEl = document.getElementById('graph-panel');
+            const exampleQuestionsEl = document.querySelector('.example-questions');
+            const toggleBtn = document.getElementById('sidebar-toggle');
+
+            graphPanelEl.classList.remove('active');
+            if (exampleQuestionsEl) exampleQuestionsEl.style.display = '';
+            document.getElementById('graph-detail').style.display = 'none';
+            toggleBtn.innerHTML = '&#9776; Example Questions';
+
+            if (graphNetwork) {
+                graphNetwork.destroy();
+                graphNetwork = null;
+            }
+        }
+
+        // Helper: wrap long text for vis.js node labels
+        function wordWrap(text, maxChars) {
+            if (!text || text.length <= maxChars) return text;
+            const words = text.split(' ');
+            let lines = [];
+            let currentLine = '';
+            for (const word of words) {
+                if (currentLine.length + word.length + 1 > maxChars && currentLine) {
+                    lines.push(currentLine);
+                    currentLine = word;
+                } else {
+                    currentLine = currentLine ? currentLine + ' ' + word : word;
+                }
+            }
+            if (currentLine) lines.push(currentLine);
+            return lines.join('\n');
         }
 
         // ---------------------------------------------------------------

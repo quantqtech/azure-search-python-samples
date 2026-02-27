@@ -291,6 +291,93 @@ def get_graph_context(client, symptom_id):
 
 
 # ---------------------------------------------------------------------------
+# Graph visualization (sidebar diagnostic tree for the frontend)
+# ---------------------------------------------------------------------------
+
+def build_graph_viz(client, symptom_id):
+    """Build a vis.js-ready node/edge structure for a matched symptom.
+
+    Reuses query_causes() which already traverses symptom → causes → components/fixes.
+    Returns a dict with nodes, edges, and symptom_name for the frontend, or None if empty.
+    """
+    # Get symptom vertex details
+    try:
+        sym_raw = client.submit(
+            "g.V(sid).valueMap(true)", {"sid": symptom_id}
+        ).all().result()
+    except Exception as e:
+        logger.warning(f"build_graph_viz symptom lookup failed for {symptom_id}: {e}")
+        return None
+
+    if not sym_raw:
+        return None
+
+    symptom_name = _first(sym_raw[0].get("name", [symptom_id]))
+    symptom_desc = _first(sym_raw[0].get("description", [""]))
+
+    # Reuse the existing cause traversal (already handles all the Cosmos DB quirks)
+    causes = query_causes(client, symptom_id)
+    if not causes:
+        return None
+
+    nodes = []
+    edges = []
+    seen_components = set()  # deduplicate component nodes
+
+    # Symptom node (root of the tree)
+    nodes.append({
+        "id": symptom_id,
+        "name": symptom_name,
+        "description": symptom_desc,
+        "type": "symptom",
+    })
+
+    for c in causes:
+        # Cause node
+        nodes.append({
+            "id": c["cause_id"],
+            "name": c["cause_desc"][:60] + ("..." if len(c["cause_desc"]) > 60 else ""),
+            "description": c["cause_desc"],
+            "type": "cause",
+            "category": c["category"],
+            "fix_desc": c["fix_desc"],
+        })
+
+        # Edge: symptom → cause (with priority label)
+        edges.append({
+            "from_id": symptom_id,
+            "to_id": c["cause_id"],
+            "label": f"P{c['priority']}" if c["priority"] else "",
+            "priority": c["priority"],
+        })
+
+        # Component node (deduplicated — multiple causes can involve same component)
+        if c["component_id"] and c["component_id"] not in seen_components:
+            seen_components.add(c["component_id"])
+            nodes.append({
+                "id": c["component_id"],
+                "name": c["component_name"] or c["component_id"],
+                "description": "",
+                "type": "component",
+            })
+
+        # Edge: cause → component
+        if c["component_id"]:
+            edges.append({
+                "from_id": c["cause_id"],
+                "to_id": c["component_id"],
+                "label": "",
+                "priority": None,
+            })
+
+    return {
+        "symptom_name": symptom_name,
+        "nodes": nodes,
+        "edges": edges,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Usage tracking (fire-and-forget after response)
 # ---------------------------------------------------------------------------
 

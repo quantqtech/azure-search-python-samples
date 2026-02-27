@@ -736,20 +736,28 @@ async def chat(req: Request) -> JSONResponse:
             "graph_context_provided": graph_active,
         })
 
-        # V3: Track graph node usage (fire-and-forget)
+        # V3: Build graph visualization data + track usage (fire-and-forget)
+        graph_viz = None
         if symptom_id:
             try:
                 import graph_helper
                 gremlin = get_gremlin_client()
                 if gremlin:
+                    graph_viz = graph_helper.build_graph_viz(gremlin, symptom_id)
                     graph_helper.increment_hit_count(gremlin, [symptom_id])
             except Exception:
                 pass
 
-        return JSONResponse(
-            {"response": response_text, "conversation_id": conversation_id, "turn_id": turn_id, "trace": trace},
-            status_code=200
-        )
+        result = {
+            "response": response_text,
+            "conversation_id": conversation_id,
+            "turn_id": turn_id,
+            "trace": trace,
+        }
+        if graph_viz:
+            result["graph_viz"] = graph_viz
+
+        return JSONResponse(result, status_code=200)
 
     except Exception as e:
         logging.error(f"Error processing chat: {str(e)}")
@@ -860,6 +868,20 @@ async def chat_stream(req: Request) -> StreamingResponse:
                     categories = extract_categories_tagged(full_text)
                     trace["sources_found"] = len(sources)
                     turn_id = generate_turn_id()
+
+                    # Build graph viz and send before done event so frontend can render sidebar
+                    graph_viz = None
+                    if symptom_id:
+                        try:
+                            import graph_helper as gh_viz
+                            gremlin_viz = get_gremlin_client()
+                            if gremlin_viz:
+                                graph_viz = gh_viz.build_graph_viz(gremlin_viz, symptom_id)
+                        except Exception:
+                            pass
+                    if graph_viz:
+                        yield f"data: {json.dumps({'type': 'graph', 'data': graph_viz})}\n\n"
+
                     yield f"data: {json.dumps({'type': 'done', 'full_text': full_text, 'turn_id': turn_id, 'trace': trace})}\n\n"
                     completed = True
 
