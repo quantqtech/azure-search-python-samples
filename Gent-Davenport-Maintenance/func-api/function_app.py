@@ -64,6 +64,8 @@ _table_client = None
 _blob_service_client = None
 _gremlin_client = None     # V3 Graph RAG — Cosmos DB Gremlin
 _symptom_cache = None      # V3 Graph RAG — cached symptom list for classification
+_direct_openai_client = None  # Direct AOAI client for classification (bypasses Foundry project routing)
+_world_model_cache = None     # V3 Layer 1 — cached machine structural summary
 
 
 def get_clients():
@@ -124,10 +126,55 @@ def get_gremlin_client():
     return None if _gremlin_client == "unavailable" else _gremlin_client
 
 
-def classify_symptom(message, openai_client):
+def get_direct_openai_client():
+    """Direct AOAI client for classification calls.
+
+    The Foundry project client routes through a project-scoped API that
+    only supports agent operations (responses.create). Classification
+    needs standard chat.completions, so we talk directly to the AOAI resource.
+    """
+    global _direct_openai_client
+    if _direct_openai_client is None:
+        from openai import AzureOpenAI
+        credential = DefaultAzureCredential()
+        token = credential.get_token("https://cognitiveservices.azure.com/.default")
+        _direct_openai_client = AzureOpenAI(
+            azure_endpoint="https://aoai-j6lw7vswhnnhw.openai.azure.com",
+            api_version="2024-10-21",
+            azure_ad_token=token.token,
+        )
+    return _direct_openai_client
+
+
+def get_world_model():
+    """Build and cache machine world model from graph (Layer 1).
+
+    Returns a compact structural summary of the Davenport machine —
+    systems, components, key relationships. Prepended to every query
+    so the LLM has baseline machine knowledge. Empty string if unavailable.
+    """
+    global _world_model_cache
+    if _world_model_cache is not None:
+        return _world_model_cache
+    try:
+        import graph_helper
+        gremlin = get_gremlin_client()
+        if not gremlin:
+            _world_model_cache = ""
+            return ""
+        _world_model_cache = graph_helper.build_world_model(gremlin)
+        logging.info(f"World model cached: {len(_world_model_cache)} chars")
+    except Exception as e:
+        logging.warning(f"World model build failed (proceeding without): {e}")
+        _world_model_cache = ""
+    return _world_model_cache
+
+
+def classify_symptom(message):
     """Classify user question into a known graph symptom. Returns (symptom_id, symptom_name) or (None, None).
 
-    Uses gpt-5-mini to match against the symptom list from Cosmos DB.
+    Uses gpt-5-mini via the direct AOAI client (not Foundry project client)
+    to match against the symptom list from Cosmos DB.
     Cached symptom list is loaded once and refreshed on function app restart.
     """
     global _symptom_cache
@@ -152,7 +199,7 @@ def classify_symptom(message, openai_client):
     )
 
     try:
-        resp = openai_client.chat.completions.create(
+        resp = get_direct_openai_client().chat.completions.create(
             model="gpt-5-mini",
             messages=[
                 {"role": "system", "content": (
@@ -178,14 +225,15 @@ def classify_symptom(message, openai_client):
     return None, None
 
 
-def get_graph_context_for_message(message, openai_client):
-    """V3 Graph RAG: classify symptom and build graph context for the agent.
+def get_graph_context_for_message(message):
+    """V3 Graph RAG Layer 2: classify symptom and build diagnostic context.
 
-    Returns (graph_context_string, symptom_id) — both empty/None if graph is unavailable
-    or the question doesn't match a known symptom. Never raises exceptions.
+    Returns (diagnostic_context_string, symptom_id) — both empty/None if graph
+    is unavailable or the question doesn't match a known symptom.
+    This is the conditional layer — only activates for troubleshooting questions.
     """
     try:
-        symptom_id, symptom_name = classify_symptom(message, openai_client)
+        symptom_id, symptom_name = classify_symptom(message)
         if not symptom_id:
             return "", None
 
@@ -589,10 +637,21 @@ async def chat(req: Request) -> JSONResponse:
             conversation_id = conversation.id
         timings["conversation_create"] = round((time.time() - t1) * 1000)
 
-        # V3 Graph RAG: classify symptom and prepend diagnostic context
+        # V3 Graph RAG: two-layer context
         t_graph = time.time()
-        graph_context, symptom_id = get_graph_context_for_message(message, openai_client)
-        agent_input = f"{graph_context}\n\nUSER QUESTION:\n{message}" if graph_context else message
+        # Layer 1: Always-present machine world model (cached)
+        world_model = get_world_model()
+        # Layer 2: Conditional diagnostic checklist (symptom match)
+        diagnostic_context, symptom_id = get_graph_context_for_message(message)
+        # Assemble agent input with available context
+        parts = []
+        if world_model:
+            parts.append(world_model)
+        if diagnostic_context:
+            parts.append(diagnostic_context)
+        parts.append(f"USER QUESTION:\n{message}")
+        agent_input = "\n\n".join(parts)
+        graph_active = bool(world_model or diagnostic_context)
         timings["graph_context"] = round((time.time() - t_graph) * 1000)
 
         t2 = time.time()
@@ -608,7 +667,7 @@ async def chat(req: Request) -> JSONResponse:
         trace = extract_reasoning_trace(response)
         trace["timings"] = timings
         trace["graph_symptom"] = symptom_id or ""
-        trace["graph_context_used"] = bool(graph_context)
+        trace["graph_context_used"] = graph_active
 
         # Citation pipeline: markers → strip search URLs → link remaining (Name) → YouTube
         response_text = process_citations(response, response.output_text)
@@ -642,7 +701,7 @@ async def chat(req: Request) -> JSONResponse:
             "source_count": len(sources),
             "category_count": len(categories),
             "graph_symptom_matched": symptom_id or "",
-            "graph_context_provided": bool(graph_context),
+            "graph_context_provided": graph_active,
         })
 
         # V3: Track graph node usage (fire-and-forget)
@@ -707,14 +766,25 @@ async def chat_stream(req: Request) -> StreamingResponse:
         conversation = openai_client.conversations.create()
         conversation_id = conversation.id
 
-    # V3 Graph RAG: classify symptom and prepend diagnostic context (before streaming starts)
-    graph_context, symptom_id = get_graph_context_for_message(message, openai_client)
-    agent_input = f"{graph_context}\n\nUSER QUESTION:\n{message}" if graph_context else message
+    # V3 Graph RAG: two-layer context (before streaming starts)
+    # Layer 1: Always-present machine world model (cached)
+    world_model = get_world_model()
+    # Layer 2: Conditional diagnostic checklist (symptom match)
+    diagnostic_context, symptom_id = get_graph_context_for_message(message)
+    # Assemble agent input with available context
+    parts = []
+    if world_model:
+        parts.append(world_model)
+    if diagnostic_context:
+        parts.append(diagnostic_context)
+    parts.append(f"USER QUESTION:\n{message}")
+    agent_input = "\n\n".join(parts)
+    graph_active = bool(world_model or diagnostic_context)
 
     async def event_generator():
         # Send conversation_id immediately so the frontend can persist it
         yield f"data: {json.dumps({'type': 'session', 'conversation_id': conversation_id})}\n\n"
-        status_msg = "Analyzing diagnostic knowledge..." if graph_context else "Searching knowledge base..."
+        status_msg = "Analyzing machine knowledge..." if graph_active else "Searching knowledge base..."
         yield f"data: {json.dumps({'type': 'status', 'text': status_msg})}\n\n"
 
         try:
@@ -751,7 +821,7 @@ async def chat_stream(req: Request) -> StreamingResponse:
                     trace = extract_reasoning_trace(event.response)
                     trace["timings"] = {"total": elapsed_ms}
                     trace["graph_symptom"] = symptom_id or ""
-                    trace["graph_context_used"] = bool(graph_context)
+                    trace["graph_context_used"] = graph_active
                     turn_id = generate_turn_id()
                     yield f"data: {json.dumps({'type': 'done', 'full_text': full_text, 'turn_id': turn_id, 'trace': trace})}\n\n"
                     completed = True
@@ -779,7 +849,7 @@ async def chat_stream(req: Request) -> StreamingResponse:
                         "source_count": len(sources),
                         "category_count": len(categories),
                         "graph_symptom_matched": symptom_id or "",
-                        "graph_context_provided": bool(graph_context),
+                        "graph_context_provided": graph_active,
                     })
 
                     # V3: Track graph node usage (fire-and-forget)

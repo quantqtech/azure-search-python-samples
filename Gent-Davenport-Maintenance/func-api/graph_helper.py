@@ -129,7 +129,142 @@ def query_all_symptoms(client):
 
 
 # ---------------------------------------------------------------------------
-# Graph context builder
+# World model (Layer 1 — always-present structural summary)
+# ---------------------------------------------------------------------------
+
+# Cap per system to keep the world model compact (~400-600 tokens total)
+MAX_COMPONENTS_PER_SYSTEM = 6
+
+
+def query_all_systems(client):
+    """Return all system vertices — used for building the world model."""
+    try:
+        raw = client.submit("g.V().has('type', 'system').valueMap(true)").all().result()
+    except Exception as e:
+        logger.warning(f"query_all_systems failed: {e}")
+        return []
+
+    return [
+        {
+            "id": _first(v.get("id")),
+            "name": _first(v.get("name", [""])),
+            "description": _first(v.get("description", [""])),
+        }
+        for v in raw
+    ]
+
+
+def query_components(client, system_id):
+    """List all components belonging to a system, via 'contains' edges."""
+    try:
+        raw = client.submit(
+            "g.V(system_id).out('contains').valueMap(true)",
+            {"system_id": system_id},
+        ).all().result()
+    except Exception as e:
+        logger.warning(f"query_components failed for {system_id}: {e}")
+        return []
+
+    return [
+        {
+            "id": _first(v.get("id")),
+            "name": _first(v.get("name", [""])),
+            "description": _first(v.get("description", [""])),
+        }
+        for v in raw
+    ]
+
+
+def query_key_relationships(client):
+    """Return connects_to and drives edges for the world model's relationship section.
+
+    Returns a list of (from_name, edge_type, to_name, description) tuples.
+    Capped to avoid overwhelming the summary.
+    """
+    try:
+        # Get connects_to and drives edges with vertex names
+        raw = client.submit(
+            "g.E().hasLabel('connects_to','drives')"
+            ".project('from_name','label','to_name','desc')"
+            ".by(outV().values('name'))"
+            ".by(label)"
+            ".by(inV().values('name'))"
+            ".by(coalesce(values('description'), constant('')))"
+        ).all().result()
+    except Exception as e:
+        logger.warning(f"query_key_relationships failed: {e}")
+        return []
+
+    return [
+        {
+            "from_name": r.get("from_name", ""),
+            "label": r.get("label", ""),
+            "to_name": r.get("to_name", ""),
+            "description": r.get("desc", ""),
+        }
+        for r in raw
+    ]
+
+
+def build_world_model(client):
+    """Build a compact structural summary of the Davenport machine from the graph.
+
+    This is Layer 1 of the V3 Graph RAG — orientation, not encyclopedia.
+    Tells the LLM what systems exist, their key components, and how they connect.
+    Explicitly signals "search for details" to avoid the LLM treating this as complete.
+
+    Returns a formatted string (~400-600 tokens) or empty string if graph is empty.
+    """
+    systems = query_all_systems(client)
+    if not systems:
+        return ""
+
+    lines = [
+        "DAVENPORT MODEL B — MACHINE OVERVIEW "
+        "(structural summary — search knowledge base for details):",
+        "",
+        "Systems and key components:",
+    ]
+
+    for sys in sorted(systems, key=lambda s: s["name"]):
+        components = query_components(client, sys["id"])
+        comp_names = [c["name"] for c in components if c["name"]]
+
+        # Cap component list and signal there's more
+        if len(comp_names) > MAX_COMPONENTS_PER_SYSTEM:
+            shown = ", ".join(comp_names[:MAX_COMPONENTS_PER_SYSTEM])
+            lines.append(f"  {sys['name']}: {shown}, ... ({len(comp_names)} total)")
+        elif comp_names:
+            lines.append(f"  {sys['name']}: {', '.join(comp_names)}")
+        else:
+            lines.append(f"  {sys['name']}")
+
+    # Add key mechanical relationships (connects_to, drives)
+    relationships = query_key_relationships(client)
+    if relationships:
+        lines.append("")
+        lines.append("Key mechanical relationships:")
+        # Show a representative sample — cap at ~10 to keep it compact
+        shown_rels = relationships[:10]
+        for r in shown_rels:
+            desc = f" — {r['description']}" if r["description"] else ""
+            verb = "drives" if r["label"] == "drives" else "connects to"
+            lines.append(f"  - {r['from_name']} {verb} {r['to_name']}{desc}")
+        if len(relationships) > 10:
+            lines.append(f"  ... and {len(relationships) - 10} more relationships")
+
+    lines.append("")
+    lines.append(
+        "NOTE: This is a structural overview only. Each system has additional "
+        "components and detailed procedures in the knowledge base. Always search "
+        "for specifics."
+    )
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Graph context builder (Layer 2 — conditional diagnostic checklist)
 # ---------------------------------------------------------------------------
 
 def get_graph_context(client, symptom_id):
