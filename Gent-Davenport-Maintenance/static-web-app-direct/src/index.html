@@ -743,17 +743,18 @@
         // Trace panel (collapsible debug info below each response)
         // ---------------------------------------------------------------
         function buildTraceHtml(trace) {
-            if (!trace || (!trace.query_intents?.length && !trace.timings)) return '';
+            if (!trace || (!trace.query_intents?.length && !trace.timings && !trace.graph_symptom)) return '';
             const traceId = 'trace-' + Date.now();
             const t = trace.timings || {};
             const duration = t.total ? (t.total / 1000).toFixed(1) + 's' : '?';
             return `
                 <div class="trace-panel">
                     <button class="trace-toggle" onclick="toggleTrace('${traceId}')">
-                        &#9654; ${duration} &middot; ${trace.query_intents?.length || 0} sub-queries
+                        &#9654; ${duration} &middot; ${trace.graph_context_used ? 'V3 Graph' : 'V1'}${trace.query_intents?.length ? ' &middot; ' + trace.query_intents.length + ' sub-queries' : ''}
                     </button>
                     <div id="${traceId}" class="trace-content">
                         <div class="label">Agent: ${trace.agent || 'unknown'}</div>
+                        <div class="label">Mode: ${trace.graph_context_used ? 'V3 Graph RAG' : 'V1 Direct Search'}${trace.graph_symptom ? ' — matched: ' + trace.graph_symptom : ''}</div>
                         ${trace.timings ? `
                         <div class="label">Timing:</div>
                         <div class="timing-bar">

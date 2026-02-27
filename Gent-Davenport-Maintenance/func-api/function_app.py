@@ -607,6 +607,8 @@ async def chat(req: Request) -> JSONResponse:
 
         trace = extract_reasoning_trace(response)
         trace["timings"] = timings
+        trace["graph_symptom"] = symptom_id or ""
+        trace["graph_context_used"] = bool(graph_context)
 
         # Citation pipeline: markers → strip search URLs → link remaining (Name) → YouTube
         response_text = process_citations(response, response.output_text)
@@ -748,6 +750,8 @@ async def chat_stream(req: Request) -> StreamingResponse:
                     elapsed_ms = round((time.time() - t_start) * 1000)
                     trace = extract_reasoning_trace(event.response)
                     trace["timings"] = {"total": elapsed_ms}
+                    trace["graph_symptom"] = symptom_id or ""
+                    trace["graph_context_used"] = bool(graph_context)
                     turn_id = generate_turn_id()
                     yield f"data: {json.dumps({'type': 'done', 'full_text': full_text, 'turn_id': turn_id, 'trace': trace})}\n\n"
                     completed = True
