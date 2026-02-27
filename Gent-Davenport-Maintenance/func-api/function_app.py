@@ -14,6 +14,7 @@ import re
 import time
 import uuid
 from datetime import datetime, timezone
+from urllib.parse import unquote
 import azure.functions as func
 from azure.identity import DefaultAzureCredential
 from azure.ai.projects import AIProjectClient
@@ -61,6 +62,8 @@ _project_client = None
 _openai_client = None
 _table_client = None
 _blob_service_client = None
+_gremlin_client = None     # V3 Graph RAG — Cosmos DB Gremlin
+_symptom_cache = None      # V3 Graph RAG — cached symptom list for classification
 
 
 def get_clients():
@@ -105,6 +108,139 @@ def get_blob_service_client():
             credential=credential
         )
     return _blob_service_client
+
+
+def get_gremlin_client():
+    """Lazy-init Gremlin client for V3 Graph RAG. Returns None if Cosmos DB config is missing."""
+    global _gremlin_client
+    if _gremlin_client is None:
+        try:
+            import graph_helper
+            _gremlin_client = graph_helper.get_client()
+            logging.info("Gremlin client connected to Cosmos DB")
+        except Exception as e:
+            logging.warning(f"Gremlin client unavailable (V3 graph disabled): {e}")
+            _gremlin_client = "unavailable"  # sentinel — don't retry every request
+    return None if _gremlin_client == "unavailable" else _gremlin_client
+
+
+def classify_symptom(message, openai_client):
+    """Classify user question into a known graph symptom. Returns (symptom_id, symptom_name) or (None, None).
+
+    Uses gpt-5-mini to match against the symptom list from Cosmos DB.
+    Cached symptom list is loaded once and refreshed on function app restart.
+    """
+    global _symptom_cache
+
+    gremlin = get_gremlin_client()
+    if not gremlin:
+        return None, None
+
+    # Load symptom list once (refreshed on function app restart)
+    if _symptom_cache is None:
+        import graph_helper
+        _symptom_cache = graph_helper.query_all_symptoms(gremlin)
+        logging.info(f"Loaded {len(_symptom_cache)} symptoms for classification")
+
+    if not _symptom_cache:
+        return None, None
+
+    # Build the symptom list for the LLM prompt
+    symptom_list = "\n".join(
+        f"- {s['id']}: {s['name']} (aliases: {', '.join(s.get('aliases', []))})"
+        for s in _symptom_cache
+    )
+
+    try:
+        resp = openai_client.chat.completions.create(
+            model="gpt-5-mini",
+            messages=[
+                {"role": "system", "content": (
+                    "You classify Davenport Model B screw machine questions into known symptom categories.\n\n"
+                    f"Known symptoms:\n{symptom_list}\n\n"
+                    "Return JSON: {\"symptom_id\": \"the_id\"} if the question matches a symptom, "
+                    "or {\"symptom_id\": null} if it doesn't (e.g., general info questions, definitions, part numbers)."
+                )},
+                {"role": "user", "content": message},
+            ],
+            response_format={"type": "json_object"},
+        )
+        result = json.loads(resp.choices[0].message.content)
+        sid = result.get("symptom_id")
+        if sid:
+            # Look up the display name
+            name = next((s["name"] for s in _symptom_cache if s["id"] == sid), sid)
+            logging.info(f"Symptom classified: {sid} ({name})")
+            return sid, name
+    except Exception as e:
+        logging.warning(f"classify_symptom failed: {e}")
+
+    return None, None
+
+
+def get_graph_context_for_message(message, openai_client):
+    """V3 Graph RAG: classify symptom and build graph context for the agent.
+
+    Returns (graph_context_string, symptom_id) — both empty/None if graph is unavailable
+    or the question doesn't match a known symptom. Never raises exceptions.
+    """
+    try:
+        symptom_id, symptom_name = classify_symptom(message, openai_client)
+        if not symptom_id:
+            return "", None
+
+        import graph_helper
+        gremlin = get_gremlin_client()
+        if not gremlin:
+            return "", None
+
+        graph_context = graph_helper.get_graph_context(gremlin, symptom_id)
+        if graph_context:
+            logging.info(f"Graph context matched: {symptom_id} ({symptom_name}), {len(graph_context)} chars")
+        return graph_context, symptom_id
+
+    except Exception as e:
+        logging.warning(f"Graph context failed (proceeding without): {e}")
+        return "", None
+
+
+def log_to_lake(folder, record):
+    """Append one JSON record to today's JSONL file in the analytics blob container.
+
+    Uses AppendBlob — designed for concurrent writes, each append_block() is atomic.
+    Folder examples: "conversations", "feedback"
+    Path written: analytics/{folder}/YYYY/MM/DD.jsonl
+
+    IMPORTANT: Wrapped defensively — a logging failure must never break the chat response.
+    """
+    try:
+        blob_service = get_blob_service_client()
+        container = blob_service.get_container_client("analytics")
+
+        # Create the analytics container if it doesn't exist yet
+        try:
+            container.create_container()
+        except Exception:
+            pass  # already exists
+
+        today = datetime.now(timezone.utc)
+        blob_path = f"{folder}/{today.year}/{today.month:02d}/{today.day:02d}.jsonl"
+        blob_client = container.get_blob_client(blob_path)
+
+        # Create append blob ONLY if it doesn't exist yet
+        # if_none_match="*" = atomic "create only if missing" — without this,
+        # create_append_blob() silently overwrites the existing blob with an empty one
+        try:
+            blob_client.create_append_blob(if_none_match="*")
+        except Exception:
+            pass  # blob already exists — just append below
+
+        line = json.dumps(record) + "\n"
+        blob_client.append_block(line.encode("utf-8"))
+
+    except Exception as e:
+        # Never let analytics logging break the main chat response
+        logging.warning(f"log_to_lake({folder}) failed: {e}")
 
 
 def transform_transcript_urls_to_youtube(text):
@@ -162,6 +298,180 @@ def transform_transcript_urls_to_youtube(text):
     return re.sub(plain_pattern, replace_plain_url, result)
 
 
+def extract_blob_urls_from_response(response):
+    """Extract real blob storage URLs from the response.
+
+    The unified index embeds blob URLs as [source: URL] prefixes in snippet text.
+    The azure_ai_search tool returns these snippets in its output. This function
+    searches the full serialized response to find those real blob URLs, building
+    a lookup for citation linking.
+
+    Returns: dict of {lowercase_display_name: (display_name, blob_url)}
+    """
+    url_lookup = {}
+    try:
+        response_dict = response.to_dict()
+        raw = json.dumps(response_dict)
+
+        # Find [source: URL] patterns embedded in search result snippets
+        for url in re.findall(r'\[source:\s*(https://[^\]\\\"]+)\]', raw):
+            if 'blob.core.windows.net' in url:
+                filename = unquote(url.split("/")[-1])
+                name = filename.rsplit(".", 1)[0]  # drop .pdf/.md
+                if name:
+                    url_lookup[name.lower()] = (name, url)
+
+        # Also check the output_text for blob URLs the agent may have included directly
+        output_text = getattr(response, 'output_text', '') or ''
+        for url in re.findall(r'https://\w+\.blob\.core\.windows\.net/[^\s)"\]]+', output_text):
+            filename = unquote(url.split("/")[-1])
+            name = filename.rsplit(".", 1)[0]
+            if name and name.lower() not in url_lookup:
+                url_lookup[name.lower()] = (name, url)
+
+        logging.info(f"extract_blob_urls: found {len(url_lookup)} blob URLs: {list(url_lookup.keys())}")
+    except Exception as e:
+        logging.warning(f"extract_blob_urls failed: {e}")
+    return url_lookup
+
+
+def clean_search_service_urls(text):
+    """Remove search service URL references that the agent or Foundry inserts.
+
+    The azure_ai_search tool annotations reference the search service URL
+    (e.g., https://srch-*.search.windows.net/), not the actual blob storage URL.
+    These leak into the output as empty or misleading links.
+
+    Patterns cleaned:
+    - [](https://srch-...search.windows.net/...) → removed entirely
+    - [text](https://srch-...search.windows.net/...) → text kept, link removed
+    """
+    # Remove empty links to search service: [](search-url) → ""
+    text = re.sub(r'\[\]\(https?://[^)]*\.search\.windows\.net[^)]*\)\s*', '', text)
+    # Unlink non-empty links to search service: [text](search-url) → text
+    text = re.sub(r'\[([^\]]+)\]\(https?://[^)]*\.search\.windows\.net[^)]*\)', r'\1', text)
+    # Clean up double spaces left by removals
+    text = re.sub(r'  +', ' ', text)
+    return text
+
+
+def process_citations(response, text):
+    """Replace Foundry citation markers with proper markdown links.
+
+    When the agent uses azure_ai_search, Foundry auto-inserts 【N:M†source】 markers
+    and stores annotation objects (url, title) on the response. We combine these with
+    the agent's (Source Name) parenthetical to produce [Source Name](URL) links.
+
+    IMPORTANT: azure_ai_search annotations often contain the search SERVICE URL
+    (e.g., https://srch-*.search.windows.net/) instead of the real blob URL.
+    When that happens, we fall back to blob URLs extracted from [source: URL] prefixes
+    in the search result snippets.
+
+    Pattern handled: (Source Name)【N:M†source】 → [Source Name](url)
+    """
+    try:
+        response_dict = response.to_dict()
+
+        # Build (output_idx, ann_idx) -> annotation lookup from message content
+        ann_lookup = {}
+        for out_idx, output_item in enumerate(response_dict.get("output", [])):
+            if output_item.get("type") != "message":
+                continue
+            for content in output_item.get("content", []):
+                for ann_idx, ann in enumerate(content.get("annotations", [])):
+                    ann_lookup[(out_idx, ann_idx)] = ann
+                    logging.info(
+                        f"Citation annotation [{out_idx}:{ann_idx}]: "
+                        f"type={ann.get('type')}, "
+                        f"url={ann.get('url', '')[:100]}, "
+                        f"title={ann.get('title', '')}"
+                    )
+
+        if not ann_lookup:
+            logging.info("No citation annotations found — stripping markers")
+            return re.sub(r'【\d+:\d+†\w+】', '', text)
+
+        # Build blob URL lookup for fallback when annotations have search service URLs
+        blob_urls = extract_blob_urls_from_response(response)
+
+        # Replace (Source Name)【N:M†source】 → [Source Name](url)
+        def replace_paren_citation(match):
+            name = match.group(1).strip()
+            n, m = int(match.group(2)), int(match.group(3))
+            ann = ann_lookup.get((n, m), {})
+            url = ann.get("url", "")
+
+            # Skip search service URLs — they're not useful for citations
+            if url and '.search.windows.net' in url:
+                url = ""
+
+            # If no good URL from annotation, try blob URL lookup by name match
+            if not url and blob_urls:
+                name_lower = name.lower()
+                for key, (display, blob_url) in blob_urls.items():
+                    if key and (name_lower in key or key in name_lower):
+                        return f"([{display}]({blob_url}))"
+
+            if url:
+                return f"[{name}]({url})"
+            return f"({name})"  # No URL found — keep for fallback pass
+
+        result = re.sub(
+            r'\(([^)]+)\)【(\d+):(\d+)†\w+】',
+            replace_paren_citation,
+            text
+        )
+
+        # Strip any remaining bare 【N:M†source】 markers (e.g. after inline citations)
+        result = re.sub(r'【\d+:\d+†\w+】', '', result)
+        return result
+
+    except Exception as e:
+        logging.warning(f"process_citations failed: {e}")
+        return re.sub(r'【\d+:\d+†\w+】', '', text)
+
+
+def fallback_link_citations(text, response):
+    """Second pass: link any remaining (Name) citations that process_citations missed.
+
+    When the agent writes (Maintenance Manual) without Foundry's 【markers】,
+    process_citations can't help. This function uses the real blob URLs extracted
+    from search result snippets (via [source: URL] prefixes) to fuzzy-match
+    unlinked (Name) patterns.
+
+    Must run AFTER process_citations and clean_search_service_urls.
+    """
+    try:
+        # Use blob URLs from search results — NOT annotation URLs (which point to search service)
+        url_lookup = extract_blob_urls_from_response(response)
+
+        if not url_lookup:
+            return text  # no blob URLs found in response
+
+        # Known category tags that should never be linked
+        category_tags = {"Tooling", "Machine", "Feeds & Speeds", "Work Holding", "Stock/Material"}
+
+        def replace_unlinked(match):
+            name = match.group(1).strip()
+            # Skip category tags and very short names (likely not citations)
+            if name in category_tags or len(name) < 8:
+                return match.group(0)
+            name_lower = name.lower()
+            # Try substring containment match against blob URL display names
+            for key, (display, url) in url_lookup.items():
+                if key and (name_lower in key or key in name_lower):
+                    return f"([{display}]({url}))"
+            return match.group(0)  # no match found, leave as-is
+
+        # Match (Name) that isn't part of a markdown link — negative lookbehind for ]
+        result = re.sub(r'(?<!\])\(([^()]+)\)(?![\[(])', replace_unlinked, text)
+        return result
+
+    except Exception as e:
+        logging.warning(f"fallback_link_citations failed: {e}")
+        return text
+
+
 def extract_reasoning_trace(response):
     """Extract reasoning trace from agent response for debugging."""
     trace = {
@@ -208,6 +518,39 @@ def extract_reasoning_trace(response):
     return trace
 
 
+def generate_turn_id():
+    """Generate a short unique turn identifier (e.g., 'turn_a1b2c3d4')."""
+    return f"turn_{uuid.uuid4().hex[:8]}"
+
+
+def extract_sources_cited(text):
+    """Extract unique sources from markdown links in the response.
+
+    Parses [Name](url) patterns from the processed response text.
+    Returns list of {"name": ..., "url": ...} dicts, deduplicated by URL.
+    """
+    matches = re.findall(r'\[([^\]]+)\]\((https?://[^)]+)\)', text)
+    seen = set()
+    sources = []
+    for name, url in matches:
+        if url not in seen:
+            seen.add(url)
+            sources.append({"name": name, "url": url})
+    return sources
+
+
+def extract_categories_tagged(text):
+    """Extract unique category tags like [Tooling], [Machine] from response text.
+
+    Only matches known Davenport categories to avoid false positives
+    from markdown links or other bracketed text.
+    """
+    known = {"Tooling", "Machine", "Feeds & Speeds", "Work Holding", "Stock/Material"}
+    found = re.findall(r'\[([^\]]+)\]', text)
+    # dict.fromkeys preserves first-seen order while deduplicating
+    return list(dict.fromkeys(cat for cat in found if cat in known))
+
+
 # ---------------------------------------------------------------------------
 # Non-streaming chat endpoint — fallback if streaming is unavailable
 # ---------------------------------------------------------------------------
@@ -225,6 +568,7 @@ async def chat(req: Request) -> JSONResponse:
     message = req_body.get('message')
     conversation_id = req_body.get('conversation_id')
     reasoning_level = req_body.get('reasoning_level', 'thorough')
+    initials = req_body.get('initials', '')
 
     if not message:
         return JSONResponse({"error": "Message is required"}, status_code=400)
@@ -245,11 +589,17 @@ async def chat(req: Request) -> JSONResponse:
             conversation_id = conversation.id
         timings["conversation_create"] = round((time.time() - t1) * 1000)
 
+        # V3 Graph RAG: classify symptom and prepend diagnostic context
+        t_graph = time.time()
+        graph_context, symptom_id = get_graph_context_for_message(message, openai_client)
+        agent_input = f"{graph_context}\n\nUSER QUESTION:\n{message}" if graph_context else message
+        timings["graph_context"] = round((time.time() - t_graph) * 1000)
+
         t2 = time.time()
         response = openai_client.responses.create(
             conversation=conversation_id,
             tool_choice="required",
-            input=message,
+            input=agent_input,
             extra_body={"agent": {"name": agent_name, "type": "agent_reference"}},
         )
         timings["agent_response"] = round((time.time() - t2) * 1000)
@@ -258,11 +608,53 @@ async def chat(req: Request) -> JSONResponse:
         trace = extract_reasoning_trace(response)
         trace["timings"] = timings
 
-        response_text = transform_transcript_urls_to_youtube(response.output_text)
+        # Citation pipeline: markers → strip search URLs → link remaining (Name) → YouTube
+        response_text = process_citations(response, response.output_text)
+        response_text = clean_search_service_urls(response_text)
+        response_text = fallback_link_citations(response_text, response)
+        response_text = transform_transcript_urls_to_youtube(response_text)
         logging.info(f"Timings: {timings}")
 
+        # Extract structured metadata from the processed response
+        turn_id = generate_turn_id()
+        turn_number = req_body.get("turn_number", 1)
+        sources = extract_sources_cited(response_text)
+        categories = extract_categories_tagged(response_text)
+
+        # Log every interaction to the data lake (fire-and-forget — never blocks response)
+        log_to_lake("conversations", {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "conversation_id": conversation_id,
+            "turn_id": turn_id,
+            "turn_number": turn_number,
+            "is_first_turn": turn_number == 1,
+            "initials": initials,
+            "message": message[:4000],
+            "response": response_text[:4000],
+            "agent": agent_name,
+            "reasoning_level": reasoning_level,
+            "duration_ms": timings["total"],
+            "sources_cited": sources,
+            "categories_tagged": categories,
+            "source_count": len(sources),
+            "category_count": len(categories),
+            "graph_symptom_matched": symptom_id or "",
+            "graph_context_provided": bool(graph_context),
+        })
+
+        # V3: Track graph node usage (fire-and-forget)
+        if symptom_id:
+            try:
+                import graph_helper
+                gremlin = get_gremlin_client()
+                if gremlin:
+                    graph_helper.increment_hit_count(gremlin, [symptom_id])
+            except Exception:
+                pass
+
         return JSONResponse(
-            {"response": response_text, "conversation_id": conversation_id, "trace": trace},
+            {"response": response_text, "conversation_id": conversation_id, "turn_id": turn_id, "trace": trace},
             status_code=200
         )
 
@@ -298,6 +690,8 @@ async def chat_stream(req: Request) -> StreamingResponse:
     message = body.get("message")
     conversation_id = body.get("conversation_id")
     reasoning_level = body.get("reasoning_level", "thorough")
+    initials = body.get("initials", "")
+    turn_number = body.get("turn_number", 1)
 
     if not message:
         return JSONResponse({"error": "Message is required"}, status_code=400)
@@ -311,17 +705,22 @@ async def chat_stream(req: Request) -> StreamingResponse:
         conversation = openai_client.conversations.create()
         conversation_id = conversation.id
 
+    # V3 Graph RAG: classify symptom and prepend diagnostic context (before streaming starts)
+    graph_context, symptom_id = get_graph_context_for_message(message, openai_client)
+    agent_input = f"{graph_context}\n\nUSER QUESTION:\n{message}" if graph_context else message
+
     async def event_generator():
         # Send conversation_id immediately so the frontend can persist it
         yield f"data: {json.dumps({'type': 'session', 'conversation_id': conversation_id})}\n\n"
-        yield f"data: {json.dumps({'type': 'status', 'text': 'Searching knowledge base...'})}\n\n"
+        status_msg = "Analyzing diagnostic knowledge..." if graph_context else "Searching knowledge base..."
+        yield f"data: {json.dumps({'type': 'status', 'text': status_msg})}\n\n"
 
         try:
             t_start = time.time()
             response = openai_client.responses.create(
                 conversation=conversation_id,
                 tool_choice="required",
-                input=message,
+                input=agent_input,
                 extra_body={"agent": {"name": agent_name, "type": "agent_reference"}},
                 stream=True,
             )
@@ -341,14 +740,57 @@ async def chat_stream(req: Request) -> StreamingResponse:
                     # Signals end of stream — use accumulated deltas or pull full text
                     if not full_text:
                         full_text = getattr(event.response, "output_text", "")
+                    # Citation pipeline: markers → strip search URLs → link remaining (Name) → YouTube
+                    full_text = process_citations(event.response, full_text)
+                    full_text = clean_search_service_urls(full_text)
+                    full_text = fallback_link_citations(full_text, event.response)
                     full_text = transform_transcript_urls_to_youtube(full_text)
+                    elapsed_ms = round((time.time() - t_start) * 1000)
                     trace = extract_reasoning_trace(event.response)
-                    trace["timings"] = {"total": round((time.time() - t_start) * 1000)}
-                    yield f"data: {json.dumps({'type': 'done', 'full_text': full_text, 'trace': trace})}\n\n"
+                    trace["timings"] = {"total": elapsed_ms}
+                    turn_id = generate_turn_id()
+                    yield f"data: {json.dumps({'type': 'done', 'full_text': full_text, 'turn_id': turn_id, 'trace': trace})}\n\n"
                     completed = True
+
+                    # Extract structured metadata for analytics
+                    sources = extract_sources_cited(full_text)
+                    categories = extract_categories_tagged(full_text)
+
+                    # Log to data lake after yielding (message/agent_name/initials captured from outer scope)
+                    log_to_lake("conversations", {
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                        "conversation_id": conversation_id,
+                        "turn_id": turn_id,
+                        "turn_number": turn_number,
+                        "is_first_turn": turn_number == 1,
+                        "initials": initials,
+                        "message": message[:4000],
+                        "response": full_text[:4000],
+                        "agent": agent_name,
+                        "reasoning_level": reasoning_level,
+                        "duration_ms": elapsed_ms,
+                        "sources_cited": sources,
+                        "categories_tagged": categories,
+                        "source_count": len(sources),
+                        "category_count": len(categories),
+                        "graph_symptom_matched": symptom_id or "",
+                        "graph_context_provided": bool(graph_context),
+                    })
+
+                    # V3: Track graph node usage (fire-and-forget)
+                    if symptom_id:
+                        try:
+                            import graph_helper
+                            gremlin = get_gremlin_client()
+                            if gremlin:
+                                graph_helper.increment_hit_count(gremlin, [symptom_id])
+                        except Exception:
+                            pass
 
             # Safety: if stream ended without a completed event, send what we have
             if full_text and not completed:
+                full_text = re.sub(r'【\d+:\d+†\w+】', '', full_text)  # strip markers, no response object available
                 full_text = transform_transcript_urls_to_youtube(full_text)
                 yield f"data: {json.dumps({'type': 'done', 'full_text': full_text, 'trace': {}})}\n\n"
 
@@ -376,6 +818,8 @@ async def submit_feedback(req: Request) -> JSONResponse:
         "PartitionKey": now.strftime("%Y-%m-%d"),
         "RowKey": f"{now.strftime('%Y%m%dT%H%M%S')}_{uuid.uuid4().hex[:6]}",
         "conversation_id": body.get("conversation_id", ""),
+        "turn_id": body.get("turn_id", ""),
+        "turn_number": body.get("turn_number", 0),
         "message": body.get("message", "")[:32000],
         "response": body.get("response", "")[:32000],
         "rating": body.get("rating", ""),
@@ -388,6 +832,22 @@ async def submit_feedback(req: Request) -> JSONResponse:
         table = get_table_client()
         table.create_entity(entity)
         logging.info(f"Feedback saved: {entity['rating']} from {entity['initials'] or 'anonymous'}")
+
+        # Also log to data lake for Power BI analytics (fire-and-forget)
+        log_to_lake("feedback", {
+            "timestamp": now.isoformat(),
+            "date": now.strftime("%Y-%m-%d"),
+            "conversation_id": entity["conversation_id"],
+            "turn_id": entity["turn_id"],
+            "turn_number": entity["turn_number"],
+            "message": body.get("message", "")[:4000],
+            "response": body.get("response", "")[:4000],
+            "rating": entity["rating"],
+            "initials": entity["initials"],
+            "notes": entity["notes"],
+            "reasoning_level": entity["reasoning_level"],
+        })
+
         return JSONResponse({"status": "saved"}, status_code=201)
     except Exception as e:
         logging.error(f"Failed to save feedback: {str(e)}")

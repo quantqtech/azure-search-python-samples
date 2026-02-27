@@ -671,8 +671,9 @@
 
         // Conversation state
         let conversationId = null;
+        let turnNumber = 0;  // Tracks Q&A position within a conversation (reset on Clear)
 
-        // Message history for feedback submission: [{message, response, reasoning_level}]
+        // Message history for feedback submission: [{message, response, reasoning_level, turn_id, turn_number}]
         let messageHistory = [];
 
         // Restore initials from localStorage (persists across sessions)
@@ -700,6 +701,7 @@
                 Welcome to Gent Machine Davenport support. Ask about troubleshooting, maintenance, or operation of your Model B machine.
             </div>`;
             conversationId = null;
+            turnNumber = 0;
             messageHistory = [];
             inputEl.focus();
         }
@@ -828,6 +830,8 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     conversation_id: conversationId,
+                    turn_id: msg.turn_id || '',
+                    turn_number: msg.turn_number || 0,
                     message: msg.message,
                     response: msg.response,
                     rating,
@@ -870,6 +874,8 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     conversation_id: conversationId,
+                    turn_id: msg.turn_id || '',
+                    turn_number: msg.turn_number || 0,
                     message: msg.message,
                     response: msg.response,
                     rating: 'flagged',
@@ -961,6 +967,7 @@
 
             const reasoningLevel = REASONING_LEVEL;
             const msgIndex = messageHistory.length;
+            turnNumber++;  // Increment turn counter for this Q&A exchange
 
             // Create the assistant message div — we'll stream into it
             const assistantDiv = document.createElement('div');
@@ -978,7 +985,7 @@
                 const streamResp = await fetch(`${API_BASE}/chat/stream`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message, conversation_id: conversationId, reasoning_level: reasoningLevel })
+                    body: JSON.stringify({ message, conversation_id: conversationId, reasoning_level: reasoningLevel, initials: initialsInput.value.trim(), turn_number: turnNumber })
                 });
 
                 if (streamResp.ok) {
@@ -1018,7 +1025,7 @@
                                 assistantDiv.innerHTML +=
                                     buildTraceHtml(data.trace) +
                                     buildFeedbackBar(msgIndex);
-                                messageHistory.push({ message, response: data.full_text, reasoning_level: reasoningLevel });
+                                messageHistory.push({ message, response: data.full_text, reasoning_level: reasoningLevel, turn_id: data.turn_id || '', turn_number: turnNumber });
                                 messagesEl.scrollTop = messagesEl.scrollHeight;
                             } else if (data.type === 'error') {
                                 assistantDiv.innerHTML = `<strong>Error:</strong> ${data.text}`;
@@ -1034,7 +1041,7 @@
                     const resp = await fetch(`${API_BASE}/chat`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ message, conversation_id: conversationId, reasoning_level: reasoningLevel })
+                        body: JSON.stringify({ message, conversation_id: conversationId, reasoning_level: reasoningLevel, initials: initialsInput.value.trim(), turn_number: turnNumber })
                     });
                     const data = await resp.json();
 
@@ -1045,7 +1052,7 @@
                     assistantDiv.innerHTML +=
                         buildTraceHtml(data.trace) +
                         buildFeedbackBar(msgIndex);
-                    messageHistory.push({ message, response: data.response, reasoning_level: reasoningLevel });
+                    messageHistory.push({ message, response: data.response, reasoning_level: reasoningLevel, turn_id: data.turn_id || '', turn_number: turnNumber });
                     messagesEl.scrollTop = messagesEl.scrollHeight;
                 }
 

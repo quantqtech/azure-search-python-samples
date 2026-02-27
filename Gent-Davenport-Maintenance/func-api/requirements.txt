@@ -5,3 +5,4 @@ openai
 azure-data-tables
 azure-storage-blob
 azurefunctions-extensions-http-fastapi
+gremlinpython

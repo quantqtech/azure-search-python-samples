@@ -52,12 +52,15 @@ def headers():
 
 # ── HTTP helpers ──────────────────────────────────────────────────────────────
 def rest_put(path, payload):
-    """PUT to Azure Search REST API — used for idempotent index creation."""
+    """PUT to Azure Search REST API — used for idempotent index creation.
+    Returns parsed JSON on 201 (created), empty dict on 204 (updated, no body).
+    """
     url  = f"{SEARCH_ENDPOINT}{path}?api-version={API_VERSION}"
     body = json.dumps(payload).encode("utf-8")
     req  = urllib.request.Request(url, data=body, method="PUT", headers=headers())
     with urllib.request.urlopen(req) as resp:
-        return json.loads(resp.read())
+        raw = resp.read()
+        return json.loads(raw) if raw else {}
 
 def rest_get(path, params=""):
     """GET from Azure Search REST API — used for reading docs."""
@@ -105,7 +108,10 @@ def create_unified_index():
     }
 
     result = rest_put(f"/indexes/{UNIFIED_INDEX}", index_def)
-    print(f"  Index ready: {result.get('name', '?')} ({len(result.get('fields', []))} fields)")
+    # 201 = created with body, 204 = updated (no body) — both are success
+    name   = result.get("name", UNIFIED_INDEX)
+    fields = result.get("fields", index_def["fields"])
+    print(f"  Index ready: {name} ({len(fields)} fields)")
     return result
 
 
@@ -144,12 +150,25 @@ def map_doc(raw_doc, source_type, category):
     Map a Foundry-generated source doc to the unified index schema.
     uid → chunk_id (the key field)
     Adds source_type and category tags.
+
+    IMPORTANT: blob_url is embedded as a prefix in the snippet text.
+    Foundry's azure_ai_search tool only passes snippet text to the agent —
+    metadata fields like blob_url are NOT visible to the agent.
+    Prefixing the URL into the snippet is the only way to give the agent
+    a clickable citation link.
     """
+    blob_url = raw_doc.get("blob_url", "")
+    snippet  = raw_doc.get("snippet", "")
+
+    # Prefix the snippet with the source URL so the agent can cite it
+    # Format: [source: URL]\n[original text]
+    snippet_with_source = f"[source: {blob_url}]\n{snippet}" if blob_url else snippet
+
     return {
         "@search.action": "mergeOrUpload",  # idempotent upsert
         "chunk_id":          raw_doc.get("uid", ""),
-        "snippet":           raw_doc.get("snippet", ""),
-        "blob_url":          raw_doc.get("blob_url", ""),
+        "snippet":           snippet_with_source,
+        "blob_url":          blob_url,
         "snippet_parent_id": raw_doc.get("snippet_parent_id", ""),
         "source_type":       source_type,
         "category":          category,

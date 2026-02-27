@@ -21,11 +21,11 @@ Conversational technical support system for Davenport Model B screw machines. Sh
 - **Result**: `davenport-kb-unified` (1,241 docs across 5 categories), `davenport-direct-v1` agent, `static-web-app-direct/` parallel front-end.
 - **Measured timings**: Search 0.5-2s | LLM answer generation ~21-25s (6,700 tokens) | Total ~30s.
 
-### Decision 1: Azure AI Search Agentic Retrieval (Foundry IQ)
+### Decision 1: Azure AI Search Agentic Retrieval / Foundry IQ (V2 — Legacy)
 - **Context**: Need to search across multiple document collections with intelligent query planning.
-- **Decision**: Use Foundry's agentic retrieval — knowledge sources, knowledge bases, and MCP-connected agents.
+- **Decision**: Use Foundry's agentic retrieval — knowledge sources, knowledge bases, and MCP-connected agents. Three agents (fast/balanced/thorough) connected via MCP to `davenport-machine-kb`.
 - **Rationale**: Foundry manages the full pipeline (blob → indexer → skillset → index) and adds LLM-powered query planning. Less custom code vs. building from scratch.
-- **Trade-offs**: Locked into Foundry's auto-generated index schema and field names. Less control over indexer behavior.
+- **Trade-offs**: Locked into Foundry's auto-generated index schema and field names. Less control over indexer behavior. **Retired**: MCP pipeline took 43-49s per query (85-95s total) — replaced by V1 direct search.
 
 ### Decision 2: text-embedding-3-large at 1536 Dimensions
 - **Context**: Foundry defaults to text-embedding-3-small (1536d). We wanted better embedding quality without changing index dimensions.
@@ -45,114 +45,160 @@ Conversational technical support system for Davenport Model B screw machines. Sh
 - **Rationale**: Indexers are single-instance (no backlog) and track a high-water mark (resume from last success). This handles the timeout transparently.
 - **Trade-offs**: After uploading new docs, there's up to a 30-minute delay before indexing starts.
 
+### Decision 6: Graph RAG with Cosmos DB Gremlin (V3 — Feb 2026)
+- **Context**: V1 direct search works for "find me info about X" but struggles with troubleshooting. BM25 keyword search doesn't understand component relationships, can't do structured diagnostics, and misses expert knowledge that isn't in any document (Dave's "10th answer"). The Davenport Model B has ~10,000 parts — a static JSON ontology won't scale or improve over time.
+- **Decision**: Cosmos DB Gremlin (serverless) for a dynamic machine ontology graph. Graph stores systems, components, symptoms, causes, and fixes as vertices with edges representing relationships (contains, caused_by, involves, fixed_by). Usage-tracked with hit_count and last_accessed for iterative refinement.
+- **Rationale**: Graph database gives traversal queries ("what causes X?"), dynamic schema (add knowledge without redeploying), usage tracking (trim cold nodes, expand hot ones), and iterative refinement. Cosmos DB Gremlin is native Azure, serverless (~$5-15/month), and works with the existing Python stack.
+- **Why not Microsoft GraphRAG**: GraphRAG auto-discovers communities in large unstructured text. Our domain is well-understood — we want curated expert knowledge with Ishikawa/fishbone structure, not statistical patterns.
+- **Trade-offs**: Adds a new Azure resource (Cosmos DB) and dependency (gremlinpython). Query-time adds a classification step + graph traversal before search. Degrades gracefully to V1 behavior if graph is empty or Cosmos DB is down.
+- **Result**: `cosmos-gent-gremlin` account, `davenport-graph` database, `machine-ontology` graph container. 570 vertices, 790 edges from 10 training videos + MasterTask flowcharts + Dave's expert knowledge.
+
 ## Component Overview
 
-### V1 Architecture (Current — Direct Search)
+### V3 Architecture (Graph RAG — In Progress)
 ```
-  static-web-app-direct/    static-web-app/ (original — kept running)
-  (no mode selector)         (fast/balanced/thorough selector)
-         │                            │
-         └────────────┬───────────────┘
-                      │
-             ┌────────▼────────┐
-             │  Azure Function │
-             │  (func-api/)    │
-             └────────┬────────┘
-                      │ reasoning_level="direct" → davenport-direct-v1
-                      │ reasoning_level="balanced" → davenport-balanced (MCP, legacy)
-                      │
-      ┌───────────────┴──────────────────┐
-      │                                  │
-┌─────▼──────────────────┐   ┌───────────▼──────────────────┐
-│  davenport-direct-v1   │   │  davenport-fast/balanced/    │
-│  azure_ai_search tool  │   │  assistant (MCP tool, legacy)│
-│  davenport-kb-unified  │   │  davenport-machine-kb        │
-│  BM25 simple, ~30s     │   │  Multi-pass retrieval, ~85s  │
-└─────┬──────────────────┘   └──────────────────────────────┘
-      │
-┌─────▼────────────────────────────────────────────┐
-│  davenport-kb-unified (1,241 docs)               │
-│  Merged from 5 ks-azureblob-* indexes            │
-│  Fields: chunk_id, snippet, blob_url,            │
-│          snippet_parent_id, source_type, category│
-└──────────────────────────────────────────────────┘
+  static-web-app-direct/
+         │
+  ┌──────▼───────────┐
+  │  Azure Function   │
+  │  (func-api/)      │
+  └──────┬────────────┘
+         │
+  ┌──────▼──────────────────────────────────┐
+  │  1. Symptom Classification (gpt-5-mini) │
+  │     "My part is feeding short"          │
+  │      → symptom_id: "part_short"         │
+  └──────┬──────────────────────────────────┘
+         │
+  ┌──────▼──────────────────────────────────┐
+  │  2. Graph Traversal (Cosmos DB Gremlin) │
+  │     g.V('part_short').outE('caused_by') │
+  │      → 5 causes in priority order       │
+  │      → components, fixes, categories    │
+  └──────┬──────────────────────────────────┘
+         │
+  ┌──────▼──────────────────────────────────┐
+  │  3. Enhanced Agent Call                 │
+  │     davenport-direct-v1 gets:           │
+  │     GRAPH CONTEXT (diagnostic checklist)│
+  │     + USER QUESTION                     │
+  │     → searches with intent, not just    │
+  │       keywords                          │
+  └──────┬──────────────────────────────────┘
+         │
+  ┌──────▼──────────────────────────────────┐
+  │  4. davenport-kb-unified (AI Search)    │
+  │     BM25 search guided by graph context │
+  └──────┬──────────────────────────────────┘
+         │
+  ┌──────▼──────────────────────────────────┐
+  │  5. Citation Pipeline + Analytics       │
+  │     Increment hit_count on activated    │
+  │     graph nodes (async, non-blocking)   │
+  └─────────────────────────────────────────┘
 ```
 
-### Original V0 Architecture (Reference)
+### Graph Model (Cosmos DB Gremlin)
 ```
-                    ┌──────────────────────────┐
-                    │   Streamlit Chat UI      │
-                    │   (app.py)               │
-                    └──────────┬───────────────┘
-                               │
-                    ┌──────────▼───────────────┐
-                    │   Azure Function API     │
-                    │   (func-api/)            │
-                    └──────────┬───────────────┘
-                               │
-                    ┌──────────▼───────────────┐
-                    │   Foundry Agent          │
-                    │   (gpt-5-mini)           │
-                    │   Connected via MCP      │
-                    └──────────┬───────────────┘
-                               │
-                    ┌──────────▼───────────────┐
-                    │   Knowledge Bases        │
-                    │   (group knowledge       │
-                    │    sources by topic)      │
-                    └──────────┬───────────────┘
-                               │
-          ┌────────────────────┼────────────────────┐
-          │                    │                    │
-┌─────────▼──────┐  ┌─────────▼──────┐  ┌─────────▼──────┐
-│ Knowledge      │  │ Knowledge      │  │ Knowledge      │
-│ Source:        │  │ Source:        │  │ Source:        │
-│ maintenance-   │  │ engineering-   │  │ troubleshooting│
-│ manuals        │  │ tips           │  │ + others       │
-└────────┬───────┘  └────────┬───────┘  └────────┬───────┘
-         │                   │                   │
-    ┌────▼────┐         ┌────▼────┐         ┌────▼────┐
-    │ Indexer │         │ Indexer │         │ Indexer │
-    │ (30min) │         │ (30min) │         │ (30min) │
-    └────┬────┘         └────┬────┘         └────┬────┘
-         │                   │                   │
-    ┌────▼────────────────────────────────────────▼────┐
-    │ Skillset Pipeline (per knowledge source):        │
-    │  1. Document extraction (text + images)          │
-    │  2. ChatCompletionSkill → image verbalization    │
-    │  3. Text splitting                               │
-    │  4. AzureOpenAIEmbeddingSkill → vectors          │
-    └────┬────────────────────────────────────────┬────┘
-         │                                        │
-    ┌────▼────┐                              ┌────▼────┐
-    │ Azure   │                              │ Azure   │
-    │ Blob    │                              │ OpenAI  │
-    │ Storage │                              │ (embed  │
-    │ (PDFs)  │                              │  + chat)│
-    └─────────┘                              └─────────┘
+Vertex Types:
+  system (47)     — Spindle System, Cross Working Tools, Feed & Chuck
+  component (235) — collet, brake, cam roll, feed finger, cutoff tool
+  symptom (47)    — part short, burr on cutoff, machine jumping, chatter
+  cause (118)     — cutoff ring on bar, loose brake, worn cam roll
+  fix (123)       — adjust cutoff depth, tighten brake, replace cam roll
+
+Edge Types:
+  contains (314)  — system → component
+  caused_by (118) — symptom → cause (with priority ranking)
+  involves (118)  — cause → component
+  fixed_by (123)  — cause → fix
+  connects_to, drives, etc. — component → component relationships
+
+Fishbone / Ishikawa Pattern:
+  Symptom: "Part is short"
+    ├── caused_by (P1) → "Cutoff ring on bar end" [Tooling]
+    │       └── fixed_by → "Adjust cutoff depth or resharpen"
+    ├── caused_by (P2) → "Feed finger tension low" [Work Holding]
+    │       └── fixed_by → "Adjust spring pressure"
+    ├── caused_by (P3) → "Collet wear" [Work Holding]
+    │       └── fixed_by → "Check bore for scoring, replace"
+    ├── caused_by (P4) → "Positive stop worn" [Machine]
+    │       └── fixed_by → "Inspect, readjust or replace"
+    └── caused_by (P5) → "Bar stock bent" [Stock/Material]
+            └── fixed_by → "Check straightness, reject bad stock"
 ```
+
+### V1 Architecture (Direct Search — Current Production)
+```
+  static-web-app-direct/
+         │
+  ┌──────▼───────────┐
+  │  Azure Function   │  POST /api/chat/stream
+  │  (func-api/)      │
+  └──────┬────────────┘
+         │
+  ┌──────▼──────────────────┐
+  │  davenport-direct-v1    │  gpt-5-mini + azure_ai_search tool
+  │  BM25 simple query      │
+  └──────┬──────────────────┘
+         │
+  ┌──────▼──────────────────────────────────┐
+  │  davenport-kb-unified (1,241 docs)      │
+  │  Merged from 5 ks-azureblob-* indexes   │
+  └─────────────────────────────────────────┘
+```
+
+### V2 Architecture (Foundry IQ / MCP — Legacy)
+The original approach: 3 agents (davenport-fast, davenport-balanced, davenport-assistant) connected via MCP to `davenport-machine-kb` knowledge base. Foundry IQ provided semantic reranking and multi-pass retrieval, but the MCP pipeline took 43-49s per query — total response time 85-95s. Retired in favor of V1 direct search. Agents still exist in Foundry but are not actively used.
 
 ## Data Flow
 
-1. **Ingest**: PDFs uploaded to Azure Blob Storage containers (one per topic)
-2. **Index**: Indexer pulls blobs, skillset extracts text + verbalizes images, embeds content, stores in search index
-3. **Query**: User asks question → Agent plans query → Knowledge base searches index → Agent synthesizes answer with citations
-4. **Serve**: Answer returned through Azure Function API → Streamlit UI
+### V3 Query-Time Flow (In Progress)
+1. **User question** arrives at Function App (`POST /api/chat/stream`)
+2. **Symptom classification** — quick gpt-5-mini call classifies the question into a known symptom ID
+3. **Graph traversal** — Gremlin query traverses symptom → causes (priority ordered) → components → fixes
+4. **Enhanced agent input** — graph context (diagnostic checklist) prepended to user question
+5. **AI Search** — agent searches `davenport-kb-unified` guided by graph context
+6. **Answer synthesis** — agent combines graph knowledge + search results into structured answer
+7. **Citation pipeline** — clean URLs, link citations, transform video URLs
+8. **Analytics** — async increment hit_count on activated graph nodes
 
-## Key Patterns Used
-- **Managed identity everywhere**: Search service identity reads blobs. `DefaultAzureCredential` for all SDK auth. API keys only where required (AOAI skill auth in skillsets).
-- **Scheduled auto-resume**: 30-minute indexer schedule handles the 2-hour timeout transparently for image-heavy PDFs.
-- **Parallel image processing**: `degreeOfParallelism: 5` on ChatCompletionSkill to process images concurrently.
-- **API key restoration**: `update_skillset.py` always restores masked API keys before PUT to prevent silent auth failures.
+### V1 Data Flow (Current Production)
+1. **Ingest**: PDFs uploaded to Azure Blob Storage containers (one per topic)
+2. **Index**: Indexer pulls blobs, skillset extracts text + verbalizes images, stores in search index
+3. **Query**: User asks question → Agent searches unified index → Agent synthesizes answer with citations
+4. **Serve**: Answer returned through Azure Function API → Static Web App UI
+
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| `graph_client.py` | Cosmos DB Gremlin connection helper + query-time traversals |
+| `build_graph.py` | Extract ontology from video + MasterTask chunks, populate graph |
+| `build_unified_index.py` | Merge 5 source indexes into davenport-kb-unified |
+| `create_direct_search_agent.py` | Create/update davenport-direct-v1 agent |
+| `func-api/function_app.py` | Azure Function API — chat, streaming, feedback, citations |
+| `func-api/graph_helper.py` | Query-time graph functions for Function App (V3) |
+| `graph_extractions.json` | Raw LLM extraction output (debug/review artifact) |
+
+## Azure Resources
+
+| Resource | Type | Purpose | Cost |
+|----------|------|---------|------|
+| `srch-j6lw7vswhnnhw` | Azure AI Search (Basic) | Unified index + source indexes | ~$70/month |
+| `aoai-j6lw7vswhnnhw` | Azure OpenAI | gpt-5-mini agent + embeddings | Pay-per-use |
+| `stj6lw7vswhnnhw` | Storage Account | PDF blobs + feedback table | ~$5/month |
+| `cosmos-gent-gremlin` | Cosmos DB (Gremlin, Serverless) | Machine ontology graph | ~$5-15/month |
 
 ## What This System Is NOT
 - Not a real-time indexing system — batch processing with up to 30-minute delay
 - Not a general-purpose search engine — specifically tuned for Davenport Model B documentation
 - Not designed for public-facing scale — internal tool for a small team
+- Not auto-pruning — cold graph nodes flagged for manual review, never auto-deleted
 
 ## Future Considerations
-- **GraphRAG V2**: Build Davenport machine ontology (component→relationship graph) on top of the unified index. Target: better "why?" answers by traversing causal chains (brake loose → index skip → part quality). ~35% improvement on relationship-based troubleshooting questions. See plan file for implementation steps.
-- **Ontology injection (quick win)**: Add machine component relationships to agent system prompt before full GraphRAG — extends the existing jargon glossary to causal relationships, zero infrastructure changes.
-- **Foundry IQ long-term**: When Microsoft resolves MCP latency (currently 43-49s structural), re-evaluate. Foundry IQ provides semantic reranking and multi-pass retrieval that direct BM25 search doesn't.
-- Add OCR skill as complement to ChatCompletionSkill for faster text extraction from scanned PDFs
-- Re-split image-dense PDFs by image count (not just file size) to stay within indexer time limits
+- **Phase 2: Query-time graph integration** — wire symptom classification + graph traversal into function_app.py
+- **Phase 3: Page numbers** — extract page numbers from PDFs, add to unified index, include in citations
+- **Phase 4: Admin dashboard** — graph usage stats, hot/cold nodes, add/edit graph nodes
+- **Phase 5: LLM expansion + Dave review** — expand extraction to all source docs, Dave verifies unverified nodes
+- **Foundry IQ long-term**: Re-evaluate when Microsoft resolves MCP latency (currently 43-49s structural)
