@@ -479,15 +479,45 @@ def process_citations(response, text):
         return re.sub(r'【\d+:\d+†\w+】', '', text)
 
 
+def convert_inline_url_citations(text):
+    """Convert (Name)(URL) patterns to [Name](URL) markdown links.
+
+    The agent sometimes writes citations as (Source Name)(https://blob.url)
+    instead of using Foundry markers. This converts them to proper markdown
+    before the fallback pass runs.
+
+    Must run AFTER process_citations and clean_search_service_urls,
+    but BEFORE fallback_link_citations.
+    """
+    try:
+        # Match (Name)(https://url) — name in parens followed immediately by URL in parens
+        # The name group excludes http to avoid matching (URL)(URL) pairs
+        def replace_inline(match):
+            name = match.group(1).strip()
+            url = match.group(2).strip()
+            return f"[{name}]({url})"
+
+        result = re.sub(
+            r'\(([^()]+?)\)\s*\((https?://[^)]+)\)',
+            replace_inline,
+            text
+        )
+        return result
+    except Exception as e:
+        logging.warning(f"convert_inline_url_citations failed: {e}")
+        return text
+
+
 def fallback_link_citations(text, response):
-    """Second pass: link any remaining (Name) citations that process_citations missed.
+    """Third pass: link any remaining (Name) citations that earlier passes missed.
 
-    When the agent writes (Maintenance Manual) without Foundry's 【markers】,
-    process_citations can't help. This function uses the real blob URLs extracted
-    from search result snippets (via [source: URL] prefixes) to fuzzy-match
-    unlinked (Name) patterns.
+    When the agent writes (Maintenance Manual) without Foundry's 【markers】
+    or inline URLs, this function uses real blob URLs extracted from search
+    result snippets (via [source: URL] prefixes) to fuzzy-match unlinked
+    (Name) patterns.
 
-    Must run AFTER process_citations and clean_search_service_urls.
+    Must run AFTER process_citations, clean_search_service_urls, and
+    convert_inline_url_citations.
     """
     try:
         # Use blob URLs from search results — NOT annotation URLs (which point to search service)
@@ -669,9 +699,10 @@ async def chat(req: Request) -> JSONResponse:
         trace["graph_symptom"] = symptom_id or ""
         trace["graph_context_used"] = graph_active
 
-        # Citation pipeline: markers → strip search URLs → link remaining (Name) → YouTube
+        # Citation pipeline: markers → strip search URLs → inline URLs → fallback (Name) → YouTube
         response_text = process_citations(response, response.output_text)
         response_text = clean_search_service_urls(response_text)
+        response_text = convert_inline_url_citations(response_text)
         response_text = fallback_link_citations(response_text, response)
         response_text = transform_transcript_urls_to_youtube(response_text)
         logging.info(f"Timings: {timings}")
@@ -813,9 +844,10 @@ async def chat_stream(req: Request) -> StreamingResponse:
                     # Signals end of stream — use accumulated deltas or pull full text
                     if not full_text:
                         full_text = getattr(event.response, "output_text", "")
-                    # Citation pipeline: markers → strip search URLs → link remaining (Name) → YouTube
+                    # Citation pipeline: markers → strip search URLs → inline URLs → fallback (Name) → YouTube
                     full_text = process_citations(event.response, full_text)
                     full_text = clean_search_service_urls(full_text)
+                    full_text = convert_inline_url_citations(full_text)
                     full_text = fallback_link_citations(full_text, event.response)
                     full_text = transform_transcript_urls_to_youtube(full_text)
                     elapsed_ms = round((time.time() - t_start) * 1000)
