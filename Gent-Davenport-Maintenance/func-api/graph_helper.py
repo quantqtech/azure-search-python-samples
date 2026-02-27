@@ -8,6 +8,8 @@ Build-time CRUD functions live in the parent directory's graph_client.py.
 
 import os, json, logging
 from datetime import datetime, timezone
+import nest_asyncio
+nest_asyncio.apply()  # gremlinpython runs its own event loop; Azure Functions already has one
 from gremlin_python.driver import client as gremlin_client, serializer
 
 logger = logging.getLogger(__name__)
