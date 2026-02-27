@@ -55,7 +55,7 @@ Conversational technical support system for Davenport Model B screw machines. Sh
 
 ## Component Overview
 
-### V3 Architecture (Graph RAG — In Progress)
+### V3 Architecture (Graph RAG — Deployed Feb 2026)
 ```
   static-web-app-direct/
          │
@@ -153,7 +153,7 @@ The original approach: 3 agents (davenport-fast, davenport-balanced, davenport-a
 
 ## Data Flow
 
-### V3 Query-Time Flow (In Progress)
+### V3 Query-Time Flow (Deployed)
 1. **User question** arrives at Function App (`POST /api/chat/stream`)
 2. **Symptom classification** — quick gpt-5-mini call classifies the question into a known symptom ID
 3. **Graph traversal** — Gremlin query traverses symptom → causes (priority ordered) → components → fixes
@@ -161,7 +161,8 @@ The original approach: 3 agents (davenport-fast, davenport-balanced, davenport-a
 5. **AI Search** — agent searches `davenport-kb-unified` guided by graph context
 6. **Answer synthesis** — agent combines graph knowledge + search results into structured answer
 7. **Citation pipeline** — clean URLs, link citations, transform video URLs
-8. **Analytics** — async increment hit_count on activated graph nodes
+8. **Analytics** — log to JSONL (blob storage), increment hit_count on activated graph nodes
+9. **Trace panel** — frontend shows "V1" or "V3 Graph" in expandable trace, plus matched symptom ID
 
 ### V1 Data Flow (Current Production)
 1. **Ingest**: PDFs uploaded to Azure Blob Storage containers (one per topic)
@@ -196,8 +197,23 @@ The original approach: 3 agents (davenport-fast, davenport-balanced, davenport-a
 - Not designed for public-facing scale — internal tool for a small team
 - Not auto-pruning — cold graph nodes flagged for manual review, never auto-deleted
 
+## Analytics & Observability
+
+Two separate data stores serve different purposes:
+
+| Store | Purpose | Location |
+|-------|---------|----------|
+| **Cosmos DB Gremlin** | Machine knowledge graph (symptoms, causes, fixes). Queried at runtime. | `cosmos-gent-gremlin` / `machine-ontology` |
+| **JSONL analytics** | Activity log — every query, timing, whether graph was used. | `stj6lw7vswhnnhw` / `analytics/conversations/YYYY/MM/DD.jsonl` |
+| **Azure Table Storage** | User feedback (thumbs up/down/flag). | `stj6lw7vswhnnhw` / `feedback` table |
+
+The trace panel in the UI (expandable under each response) shows:
+- **Collapsed**: duration + "V1" or "V3 Graph"
+- **Expanded**: Agent version, V1/V3 mode, matched symptom ID, timings breakdown, token usage
+
+JSONL records include `graph_symptom_matched` and `graph_context_provided` fields for analytics.
+
 ## Future Considerations
-- **Phase 2: Query-time graph integration** — wire symptom classification + graph traversal into function_app.py
 - **Phase 3: Page numbers** — extract page numbers from PDFs, add to unified index, include in citations
 - **Phase 4: Admin dashboard** — graph usage stats, hot/cold nodes, add/edit graph nodes
 - **Phase 5: LLM expansion + Dave review** — expand extraction to all source docs, Dave verifies unverified nodes
