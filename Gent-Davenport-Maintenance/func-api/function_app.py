@@ -681,6 +681,7 @@ async def chat(req: Request) -> JSONResponse:
         turn_number = req_body.get("turn_number", 1)
         sources = extract_sources_cited(response_text)
         categories = extract_categories_tagged(response_text)
+        trace["sources_found"] = len(sources)
 
         # Log every interaction to the data lake (fire-and-forget — never blocks response)
         log_to_lake("conversations", {
@@ -822,13 +823,13 @@ async def chat_stream(req: Request) -> StreamingResponse:
                     trace["timings"] = {"total": elapsed_ms}
                     trace["graph_symptom"] = symptom_id or ""
                     trace["graph_context_used"] = graph_active
+                    # Extract sources before yielding so trace includes the count
+                    sources = extract_sources_cited(full_text)
+                    categories = extract_categories_tagged(full_text)
+                    trace["sources_found"] = len(sources)
                     turn_id = generate_turn_id()
                     yield f"data: {json.dumps({'type': 'done', 'full_text': full_text, 'turn_id': turn_id, 'trace': trace})}\n\n"
                     completed = True
-
-                    # Extract structured metadata for analytics
-                    sources = extract_sources_cited(full_text)
-                    categories = extract_categories_tagged(full_text)
 
                     # Log to data lake after yielding (message/agent_name/initials captured from outer scope)
                     log_to_lake("conversations", {
