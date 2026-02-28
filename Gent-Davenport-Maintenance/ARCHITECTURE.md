@@ -68,10 +68,11 @@ User: "Why is my part coming out short?"
 └──────────────────────────────────────────────────┘
         │
         ▼
-┌─── Citation Pipeline ───────────────────────────┐
-│ 8 passes: markers → search URLs → inline →       │
-│ embedded → double-bracket → single-bracket →      │
-│ fallback link → YouTube conversion                │
+┌─── Citation Pipeline (9 passes) ───────────────┐
+│ markers → search URLs → empty links → inline →  │
+│ embedded → brackets → single-bracket →           │
+│ fallback link → YouTube conversion               │
+│ (see "Citation Pipeline" section for details)    │
 └──────────────────────────────────────────────────┘
         │
         ▼
@@ -270,7 +271,43 @@ The sidebar always shows a graph — Layer 2 focused traversal when a component 
   - `POST /api/feedback` — user feedback (thumbs up/down/flag)
   - `GET /api/feedback` — admin feedback review
   - `POST /api/voice-memo` — voice memo upload to blob storage
-- **Citation pipeline**: 8-pass processing (markers → search URLs → inline → embedded → double-bracket → single-bracket → fallback link → YouTube)
+- **Citation pipeline**: 9-pass processing — see detailed section below
+
+### Citation Pipeline (detailed)
+
+The agent outputs citations in **8+ inconsistent formats** depending on how Foundry and the LLM interact on a given run. The pipeline normalizes all of them into `[Display Name](URL)` markdown links.
+
+**Why this is complex**: The agent uses `azure_ai_search`, which returns blob URLs for documents and `【N:M†source】` markers. But the agent also generates its own markdown links, empty-URL links, parenthetical citations, and bracket citations. Video transcripts are `.md` files in blob storage that must redirect to YouTube URLs. Timestamps like `04:14–05:22` (en-dash, not hyphen) should become YouTube deep links.
+
+**Agent output formats** (all observed in production):
+| Format | Example | Handled by |
+|--------|---------|------------|
+| A | `(Name) 【7:1†source】` | Step 1: process_citations |
+| B | `[Name](blob_url)` | Step 9: transform_transcript_urls |
+| C | `[Name]()` | Step 3: fill_empty_url_citations |
+| D | `([Name](blob_url) timestamp)` | Step 8: fallback (embedded markdown detection) |
+| E | `(Name)(url)` | Step 4: convert_inline_url |
+| F | `(Name (url))` | Step 5: convert_embedded_url |
+| G | `[Name]` | Step 7: convert_single_bracket |
+| H | `[[Name]]` | Step 6: convert_bracket_citations |
+
+**Pipeline order** (both streaming and non-streaming paths must match):
+1. `process_citations` — Format A: replaces `(Name)【marker】` using annotation lookup
+2. `clean_search_service_urls` — strips `.search.windows.net` URLs (not real blob URLs)
+3. `fill_empty_url_citations` — Format C: `[Name]()` → YouTube or `(Name)` for fallback
+4. `convert_inline_url_citations` — Format E: `(Name)(url)` → `[Name](url)`
+5. `convert_embedded_url_citations` — Format F: `(Name (url))` → `[Name](url)`
+6. `convert_bracket_citations` — Format H: `[[Name]]` → `(Name)`
+7. `convert_single_bracket_citations` — Format G: `[Name]` → `(Name)`
+8. `fallback_link_citations` — `(Name)` → `[Name](blob_url)` or YouTube. **Also handles Format D** — detects `[text](url)` already inside the parenthetical and extracts properly instead of nesting
+9. `transform_transcript_urls_to_youtube` — Format B: `[Name](video-training/*.md)` → YouTube
+
+**Critical gotchas**:
+- Steps 1-9 MUST run in this order. Step 8 (fallback) is the catch-all that handles anything left as `(Name)`. Steps 6-7 normalize brackets to parens so step 8 can handle them.
+- Step 8 can accidentally match Format D (`([Name](url) timestamp)`) because its regex matches any `(text)`. The `replace_unlinked` function detects embedded markdown links and handles them correctly.
+- Video transcript blob URLs (`.md` files in `video-training/`) have NO value as user-facing links — they must become YouTube links via `YOUTUBE_VIDEO_MAP`.
+- The agent uses en-dash (U+2013), not hyphen, between timestamp ranges. All timestamp regexes must handle both.
+- Both streaming and non-streaming code paths run the exact same 9 steps — keep them in sync.
 
 ### Graph
 - **Cosmos DB Gremlin** (`cosmos-gent-gremlin`, serverless): Machine ontology graph

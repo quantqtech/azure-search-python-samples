@@ -20,6 +20,9 @@ from azure.identity import DefaultAzureCredential
 from azure.ai.projects import AIProjectClient
 from azurefunctions.extensions.http.fastapi import Request, StreamingResponse, JSONResponse
 
+# Pipeline version — increment on each deploy to verify code is live
+PIPELINE_VERSION = "2026-02-28-v6"
+
 # Storage config for video links
 STORAGE_ACCOUNT = "stj6lw7vswhnnhw"
 TRANSCRIPT_CONTAINER = "video-training"
@@ -293,6 +296,50 @@ def log_to_lake(folder, record):
         logging.warning(f"log_to_lake({folder}) failed: {e}")
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# CITATION PIPELINE
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# The agent (azure_ai_search tool) outputs citations in several inconsistent
+# formats depending on how Foundry and the LLM interact on a given run:
+#
+#   Format A: (Name) 【N:M†source】      — parenthetical + Foundry marker
+#   Format B: [Name](blob_url)           — markdown link to blob storage
+#   Format C: [Name]()                   — empty-URL markdown link
+#   Format D: ([Name](blob_url) ts)      — markdown link wrapped in parens + timestamp
+#   Format E: (Name)(url)                — name and URL in separate parens
+#   Format F: (Name (url))               — URL embedded inside name parens
+#   Format G: [Name]                     — single-bracket, no URL
+#   Format H: [[Name]]                   — double-bracket, no URL
+#
+# IMPORTANT: Video transcript names like "Davenport Machine Model B - Preventive
+# Maintenance" reference .md files in blob storage that have NO value as links.
+# They must be converted to YouTube URLs via YOUTUBE_VIDEO_MAP. Timestamps like
+# "04:14–05:22" (note: agent uses en-dash U+2013, not hyphen) should become
+# YouTube deep links (&t=254).
+#
+# Pipeline order matters — each step handles one format and normalizes for the
+# next. Adding/reordering steps can break the chain.
+#
+# Pipeline (9 steps, both streaming and non-streaming):
+#   1. process_citations         — Format A: (Name)【marker】 → [Name](url) or (Name)
+#   2. clean_search_service_urls — strips .search.windows.net URLs (not real blob URLs)
+#   3. fill_empty_url_citations  — Format C/D: [Name]() → YouTube or (Name) for fallback
+#   4. convert_inline_url        — Format E: (Name)(url) → [Name](url)
+#   5. convert_embedded_url      — Format F: (Name (url)) → [Name](url)
+#   6. convert_bracket_citations — Format H: [[Name]] → (Name)
+#   7. convert_single_bracket    — Format G: [Name] → (Name)
+#   8. fallback_link_citations   — (Name) → [Name](blob_url or YouTube)
+#                                  Also handles Format D via embedded markdown detection
+#   9. transform_transcript_urls — Format B: [Name](blob_url) → [Name](YouTube)
+#
+# KEY GOTCHA: fallback_link_citations (step 8) matches ANY (text) not preceded
+# by ]. This can grab Format D content ([Name](blob_url) timestamp) that still
+# has outer parens. The replace_unlinked function detects embedded markdown links
+# and handles them properly instead of nesting broken links.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
 def transform_transcript_urls_to_youtube(text):
     """Replace transcript URLs in response text with YouTube URLs.
 
@@ -301,7 +348,8 @@ def transform_transcript_urls_to_youtube(text):
     """
     # Pattern: [link text](https://storage.blob.../video-training/Name.md) optional_timestamp
     # Use .+? (non-greedy) to handle filenames with parentheses like "(part 1)"
-    pattern = rf'\[([^\]]+)\]\((https://{STORAGE_ACCOUNT}\.blob\.core\.windows\.net/{TRANSCRIPT_CONTAINER}/(.+?)\.md)\)(\s*(\d{{1,2}}:\d{{2}}(?:-\d{{1,2}}:\d{{2}})?))?'
+    # Timestamp separator: hyphen OR en-dash (U+2013) — agent uses both
+    pattern = rf'\[([^\]]+)\]\((https://{STORAGE_ACCOUNT}\.blob\.core\.windows\.net/{TRANSCRIPT_CONTAINER}/(.+?)\.md)\)(\s*(\d{{1,2}}:\d{{2}}(?:[^\d\s]\d{{1,2}}:\d{{2}})?))?'
 
     def replace_with_youtube(match):
         link_text = match.group(1)
@@ -594,19 +642,16 @@ def fill_empty_url_citations(text):
         full_name = f"{name} {timestamp}" if timestamp else name
         return f"({full_name})"
 
-    # en-dash (U+2013) must be a real char, not \u2013 in a raw string
-    dash = '\u2013'
+    # Use [^\d\s] for dash — matches en-dash, em-dash, hyphen, arrow, any separator
     try:
         # Pattern 1: [[Name]() timestamp] — double-bracket wrapped citation
-        text = re.sub(
-            r'\[\[([^\]]+)\]\(\)\s*(\d{1,2}:\d{2}(?:[' + dash + r'\-]\d{1,2}:\d{2})?)?\]',
-            fill_url, text
-        )
-        # Pattern 2: [Name]() timestamp — standalone empty-URL markdown link
-        text = re.sub(
-            r'\[([^\]]+)\]\(\)\s*(\d{1,2}:\d{2}(?:[' + dash + r'\-]\d{1,2}:\d{2})?)?',
-            fill_url, text
-        )
+        pat1 = r'\[\[([^\]]+)\]\(\)\s*(\d{1,2}:\d{2}(?:[^\d\s]\d{1,2}:\d{2})?)?\]'
+        logging.info(f"fill_empty_url: scanning {len(text)} chars, pattern1 matches={len(re.findall(pat1, text))}")
+        text = re.sub(pat1, fill_url, text)
+
+        # Pattern 2: [Name]() — standalone empty-URL markdown link (with optional timestamp)
+        pat2 = r'\[([^\]]+)\]\(\)\s*(\d{1,2}:\d{2}(?:[^\d\s]\d{1,2}:\d{2})?)?'
+        text = re.sub(pat2, fill_url, text)
         return text
     except Exception as e:
         logging.warning(f"fill_empty_url_citations failed: {e}")
@@ -730,16 +775,41 @@ def fallback_link_citations(text, response):
             if name.count(',') >= 2:
                 return match.group(0)
 
-            # If the name itself contains a URL, extract it and link directly
-            # (prevents double-nesting when agent embeds URL in citation text)
+            # If the name already contains a markdown link [text](url), extract properly.
+            # This happens when fallback_link_citations captures ([Name](blob_url) timestamp)
+            # — the agent put a valid markdown link inside parens.
+            md_link = re.search(r'\[([^\]]+)\]\((https?://[^)]+)\)', name)
+            if md_link:
+                display = md_link.group(1).strip()
+                url = md_link.group(2).strip()
+                # Get any text after the markdown link (e.g., timestamps "04:14–05:22")
+                suffix = name[md_link.end():].strip()
+                # Video transcripts (.md in video-training) → YouTube with timestamp
+                if f'/{TRANSCRIPT_CONTAINER}/' in url and url.endswith('.md'):
+                    video_name_encoded = url.split('/')[-1].rsplit('.', 1)[0]
+                    video_name = unquote(video_name_encoded)
+                    yt_id = YOUTUBE_VIDEO_MAP.get(video_name)
+                    if yt_id:
+                        yt_url = f"https://www.youtube.com/watch?v={yt_id}"
+                        if suffix:
+                            # Parse first timestamp for YouTube deep link
+                            ts = re.search(r'(\d{1,2}):(\d{2})', suffix)
+                            if ts:
+                                total_seconds = int(ts.group(1)) * 60 + int(ts.group(2))
+                                yt_url += f"&t={total_seconds}"
+                        link_display = f"{video_name} {suffix}" if suffix else video_name
+                        return safe_markdown_link(link_display, yt_url)
+                # Non-video markdown link — preserve with suffix
+                link_display = f"{display} {suffix}" if suffix else display
+                return safe_markdown_link(link_display, url)
+
+            # If the name contains a bare URL (no markdown syntax), extract and link
             embedded_url = re.search(r'https?://[^\s)"\]]+', name)
             if embedded_url:
                 url = embedded_url.group(0)
-                # Derive display name: strip the URL and any trailing extension
                 clean_name = re.sub(r'https?://[^\s)"\]]+', '', name).strip()
                 clean_name = re.sub(r'\.\w{2,4}$', '', clean_name).strip(' .')
                 if not clean_name:
-                    from urllib.parse import unquote
                     filename = unquote(url.split("/")[-1])
                     clean_name = filename.rsplit(".", 1)[0]
                 return safe_markdown_link(clean_name, url)
@@ -931,6 +1001,7 @@ async def chat(req: Request) -> JSONResponse:
         trace["timings"] = timings
         trace["graph_component"] = component_id or ""
         trace["graph_context_used"] = graph_active
+        trace["pipeline_version"] = PIPELINE_VERSION
 
         # Citation pipeline: markers → strip search URLs → fill empty links → inline URLs → embedded URLs → fallback (Name) → YouTube
         response_text = process_citations(response, response.output_text)
@@ -1103,6 +1174,7 @@ async def chat_stream(req: Request) -> StreamingResponse:
                     trace["timings"] = {"total": elapsed_ms}
                     trace["graph_component"] = component_id or ""
                     trace["graph_context_used"] = graph_active
+                    trace["pipeline_version"] = PIPELINE_VERSION
                     # Extract sources before yielding so trace includes the count
                     sources = extract_sources_cited(full_text)
                     categories = extract_categories_tagged(full_text)
