@@ -558,6 +558,59 @@ def convert_bracket_citations(text):
         return text
 
 
+def fill_empty_url_citations(text):
+    """Fill in empty-URL markdown links [Name]() with real URLs.
+
+    The agent sometimes creates [Name]() when it knows the document name
+    but can't resolve the URL (common with azure_ai_search annotations).
+    Also handles [[Name]() timestamp] — double-bracket wrapping with timestamps.
+
+    Priority: YOUTUBE_VIDEO_MAP first → (Name) for fallback pass.
+    Must run AFTER clean_search_service_urls, BEFORE convert_bracket_citations.
+    """
+    def fill_url(match):
+        name = match.group(1).strip()
+        timestamp = match.group(2)  # may be None
+        name_lower = name.lower()
+
+        # Try YOUTUBE_VIDEO_MAP first
+        for video_name, yt_id in YOUTUBE_VIDEO_MAP.items():
+            if name_lower in video_name.lower() or video_name.lower() in name_lower:
+                yt_url = f"https://www.youtube.com/watch?v={yt_id}"
+                # Parse timestamp to seconds for YouTube deep link
+                if timestamp:
+                    time_part = timestamp.strip().replace('\u2013', '-').split('-')[0]
+                    parts = time_part.split(':')
+                    if len(parts) == 2:
+                        try:
+                            total_seconds = int(parts[0]) * 60 + int(parts[1])
+                            yt_url += f"&t={total_seconds}"
+                        except ValueError:
+                            pass
+                display = f"{video_name} {timestamp}" if timestamp else video_name
+                return f"[{display}]({yt_url})"
+
+        # No URL found — convert to (Name) so fallback_link_citations can try
+        full_name = f"{name} {timestamp}" if timestamp else name
+        return f"({full_name})"
+
+    try:
+        # Pattern 1: [[Name]() timestamp] — double-bracket wrapped citation
+        text = re.sub(
+            r'\[\[([^\]]+)\]\(\)\s*(\d{1,2}:\d{2}(?:[\u2013\-]\d{1,2}:\d{2})?)?\]',
+            fill_url, text
+        )
+        # Pattern 2: [Name]() timestamp — standalone empty-URL markdown link
+        text = re.sub(
+            r'\[([^\]]+)\]\(\)\s*(\d{1,2}:\d{2}(?:[\u2013\-]\d{1,2}:\d{2})?)?',
+            fill_url, text
+        )
+        return text
+    except Exception as e:
+        logging.warning(f"fill_empty_url_citations failed: {e}")
+        return text
+
+
 def convert_single_bracket_citations(text):
     """Convert [Name] single-bracket citations to (Name) format.
 
@@ -877,9 +930,10 @@ async def chat(req: Request) -> JSONResponse:
         trace["graph_component"] = component_id or ""
         trace["graph_context_used"] = graph_active
 
-        # Citation pipeline: markers → strip search URLs → inline URLs → embedded URLs → fallback (Name) → YouTube
+        # Citation pipeline: markers → strip search URLs → fill empty links → inline URLs → embedded URLs → fallback (Name) → YouTube
         response_text = process_citations(response, response.output_text)
         response_text = clean_search_service_urls(response_text)
+        response_text = fill_empty_url_citations(response_text)
         response_text = convert_inline_url_citations(response_text)
         response_text = convert_embedded_url_citations(response_text)
         response_text = convert_bracket_citations(response_text)
@@ -1032,9 +1086,10 @@ async def chat_stream(req: Request) -> StreamingResponse:
                     # Signals end of stream — use accumulated deltas or pull full text
                     if not full_text:
                         full_text = getattr(event.response, "output_text", "")
-                    # Citation pipeline: markers → strip search URLs → inline URLs → embedded URLs → fallback (Name) → YouTube
+                    # Citation pipeline: markers → strip search URLs → fill empty links → inline URLs → embedded URLs → fallback (Name) → YouTube
                     full_text = process_citations(event.response, full_text)
                     full_text = clean_search_service_urls(full_text)
+                    full_text = fill_empty_url_citations(full_text)
                     full_text = convert_inline_url_citations(full_text)
                     full_text = convert_embedded_url_citations(full_text)
                     full_text = convert_bracket_citations(full_text)
