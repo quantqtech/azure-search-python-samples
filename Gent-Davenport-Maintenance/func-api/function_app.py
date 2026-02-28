@@ -21,7 +21,7 @@ from azure.ai.projects import AIProjectClient
 from azurefunctions.extensions.http.fastapi import Request, StreamingResponse, JSONResponse
 
 # Pipeline version — increment on each deploy to verify code is live
-PIPELINE_VERSION = "2026-02-28-v7-layer2"
+PIPELINE_VERSION = "2026-02-28-v8-fix-fake-links"
 
 # Storage config for video links
 STORAGE_ACCOUNT = "stj6lw7vswhnnhw"
@@ -360,10 +360,12 @@ def log_to_lake(folder, record):
 # Pipeline order matters — each step handles one format and normalizes for the
 # next. Adding/reordering steps can break the chain.
 #
-# Pipeline (9 steps, both streaming and non-streaming):
+# Pipeline (10 steps, both streaming and non-streaming):
 #   1. process_citations         — Format A: (Name)【marker】 → [Name](url) or (Name)
 #   2. clean_search_service_urls — strips .search.windows.net URLs (not real blob URLs)
 #   3. fill_empty_url_citations  — Format C/D: [Name]() → YouTube or (Name) for fallback
+#   3b. fix_fake_markdown_links  — [Category](DocName) → [Category] (DocName)
+#                                  Agent mimics [Tooling] tags from Layer 2 diagnostic context
 #   4. convert_inline_url        — Format E: (Name)(url) → [Name](url)
 #   5. convert_embedded_url      — Format F: (Name (url)) → [Name](url)
 #   6. convert_bracket_citations — Format H: [[Name]] → (Name)
@@ -694,6 +696,24 @@ def fill_empty_url_citations(text):
         return text
     except Exception as e:
         logging.warning(f"fill_empty_url_citations failed: {e}")
+        return text
+
+
+def fix_fake_markdown_links(text):
+    """Separate [Category](Document Name) that looks like a markdown link but isn't.
+
+    With Layer 2 context injected, the agent sees [Tooling], [Work Holding] etc.
+    in the diagnostic checklist and outputs [Category](Document Name) — which regex
+    treats as a valid markdown link. This step adds a space: [Category] (Document Name)
+    so subsequent steps can process category tags and document citations independently.
+
+    Only affects patterns where the "URL" part does NOT start with http.
+    Real markdown links [Name](https://...) are left untouched.
+    """
+    try:
+        return re.sub(r'\[([^\]]+)\]\((?!https?://)', r'[\1] (', text)
+    except Exception as e:
+        logging.warning(f"fix_fake_markdown_links failed: {e}")
         return text
 
 
@@ -1047,6 +1067,7 @@ async def chat(req: Request) -> JSONResponse:
         response_text = process_citations(response, response.output_text)
         response_text = clean_search_service_urls(response_text)
         response_text = fill_empty_url_citations(response_text)
+        response_text = fix_fake_markdown_links(response_text)
         response_text = convert_inline_url_citations(response_text)
         response_text = convert_embedded_url_citations(response_text)
         response_text = convert_bracket_citations(response_text)
@@ -1203,6 +1224,7 @@ async def chat_stream(req: Request) -> StreamingResponse:
                     full_text = process_citations(event.response, full_text)
                     full_text = clean_search_service_urls(full_text)
                     full_text = fill_empty_url_citations(full_text)
+                    full_text = fix_fake_markdown_links(full_text)
                     full_text = convert_inline_url_citations(full_text)
                     full_text = convert_embedded_url_citations(full_text)
                     full_text = convert_bracket_citations(full_text)
