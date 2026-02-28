@@ -2,11 +2,11 @@
 graph_helper.py — Query-time graph functions for the Function App (V3 Graph RAG).
 
 Slim version of graph_client.py containing only what's needed at request time:
-connection, symptom queries, context building, and usage tracking.
+connection, world model building, component graph visualization, and usage tracking.
 Build-time CRUD functions live in the parent directory's graph_client.py.
 """
 
-import os, json, logging
+import os, logging
 from datetime import datetime, timezone
 import nest_asyncio
 nest_asyncio.apply()  # gremlinpython runs its own event loop; Azure Functions already has one
@@ -40,93 +40,6 @@ def get_client():
 # ---------------------------------------------------------------------------
 # Query-time traversals
 # ---------------------------------------------------------------------------
-
-def query_causes(client, symptom_id):
-    """
-    Traverse from a symptom to its causes, ordered by priority.
-    Uses simple separate queries (Cosmos DB Gremlin doesn't support complex coalesce/select).
-    """
-    try:
-        raw = client.submit(
-            "g.V(symptom_id).outE('caused_by').order().by('priority')"
-            ".project('priority','cause_id')"
-            ".by('priority')"
-            ".by(inV().id())",
-            {"symptom_id": symptom_id},
-        ).all().result()
-    except Exception as e:
-        logger.warning(f"query_causes failed for {symptom_id}: {e}")
-        return []
-
-    if not raw:
-        return []
-
-    results = []
-    for row in raw:
-        cause_id = row.get("cause_id", "")
-        priority = row.get("priority", 99)
-
-        # Get cause vertex details
-        cause_data = {}
-        try:
-            cv = client.submit("g.V(cid).valueMap(true)", {"cid": cause_id}).all().result()
-            if cv:
-                cause_data = cv[0]
-        except Exception:
-            pass
-
-        # Get component via involves edge
-        comp_id, comp_name = "", ""
-        try:
-            comp_raw = client.submit("g.V(cid).out('involves').valueMap(true)", {"cid": cause_id}).all().result()
-            if comp_raw:
-                comp_id = _first(comp_raw[0].get("id", [""]))
-                comp_name = _first(comp_raw[0].get("name", [""]))
-        except Exception:
-            pass
-
-        # Get fix via fixed_by edge
-        fix_id, fix_desc = "", ""
-        try:
-            fix_raw = client.submit("g.V(cid).out('fixed_by').valueMap(true)", {"cid": cause_id}).all().result()
-            if fix_raw:
-                fix_id = _first(fix_raw[0].get("id", [""]))
-                fix_desc = _first(fix_raw[0].get("description", [""]))
-        except Exception:
-            pass
-
-        results.append({
-            "cause_id": cause_id,
-            "cause_desc": _first(cause_data.get("description", [""])),
-            "priority": priority,
-            "category": _first(cause_data.get("category", [""])),
-            "component_id": comp_id,
-            "component_name": comp_name,
-            "fix_id": fix_id,
-            "fix_desc": fix_desc,
-        })
-
-    return results
-
-
-def query_all_symptoms(client):
-    """Return all symptom vertices — used for symptom classification matching."""
-    try:
-        raw = client.submit("g.V().has('type', 'symptom').valueMap(true)").all().result()
-    except Exception as e:
-        logger.warning(f"query_all_symptoms failed: {e}")
-        return []
-
-    return [
-        {
-            "id": _first(v.get("id")),
-            "name": _first(v.get("name", [""])),
-            "description": _first(v.get("description", [""])),
-            "aliases": _parse_json_list(v.get("aliases", ["[]"])),
-        }
-        for v in raw
-    ]
-
 
 # ---------------------------------------------------------------------------
 # World model (Layer 1 — always-present structural summary)
@@ -263,115 +176,215 @@ def build_world_model(client):
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# Graph context builder (Layer 2 — conditional diagnostic checklist)
-# ---------------------------------------------------------------------------
+def query_component_by_name(client, component_name):
+    """Find a component vertex by fuzzy name match. Returns (id, name, description) or None.
 
-def get_graph_context(client, symptom_id):
+    Searches for exact case-insensitive match first, then substring containment.
     """
-    Build a formatted diagnostic checklist for a matched symptom.
-    Injected into the agent's input to guide its search and answer.
-    """
-    causes = query_causes(client, symptom_id)
-    if not causes:
-        return ""
-
-    lines = [f'KNOWN CAUSES for symptom "{symptom_id}" (in diagnostic priority order):']
-    for i, c in enumerate(causes, 1):
-        category = f"[{c['category']}] " if c["category"] else ""
-        fix_text = f" — Fix: {c['fix_desc']}" if c["fix_desc"] else ""
-        comp_text = f" (component: {c['component_name']})" if c["component_name"] else ""
-        lines.append(f"  {i}. {category}{c['cause_desc']}{comp_text}{fix_text}")
-
-    lines.append("")
-    lines.append("Use this as a diagnostic checklist. Search for document evidence for each cause.")
-    lines.append("Include causes from this list even if search results don't mention them directly.")
-
-    return "\n".join(lines)
-
-
-# ---------------------------------------------------------------------------
-# Graph visualization (sidebar diagnostic tree for the frontend)
-# ---------------------------------------------------------------------------
-
-def build_graph_viz(client, symptom_id):
-    """Build a vis.js-ready node/edge structure for a matched symptom.
-
-    Reuses query_causes() which already traverses symptom → causes → components/fixes.
-    Returns a dict with nodes, edges, and symptom_name for the frontend, or None if empty.
-    """
-    # Get symptom vertex details
     try:
-        sym_raw = client.submit(
-            "g.V(sid).valueMap(true)", {"sid": symptom_id}
+        # Get all component vertices — small graph, simpler than Gremlin text predicates
+        raw = client.submit("g.V().has('type', 'component').valueMap(true)").all().result()
+    except Exception as e:
+        logger.warning(f"query_component_by_name failed: {e}")
+        return None
+
+    name_lower = component_name.lower()
+
+    # Pass 1: exact match (case-insensitive)
+    for v in raw:
+        vid = _first(v.get("id"))
+        vname = _first(v.get("name", [""]))
+        if vname.lower() == name_lower:
+            return {"id": vid, "name": vname, "description": _first(v.get("description", [""]))}
+
+    # Pass 2: component name contains the search term or vice versa
+    for v in raw:
+        vid = _first(v.get("id"))
+        vname = _first(v.get("name", [""]))
+        if name_lower in vname.lower() or vname.lower() in name_lower:
+            return {"id": vid, "name": vname, "description": _first(v.get("description", [""]))}
+
+    return None
+
+
+def query_all_components(client):
+    """Return all component vertices — used for component classification matching."""
+    try:
+        raw = client.submit("g.V().has('type', 'component').valueMap(true)").all().result()
+    except Exception as e:
+        logger.warning(f"query_all_components failed: {e}")
+        return []
+
+    return [
+        {
+            "id": _first(v.get("id")),
+            "name": _first(v.get("name", [""])),
+            "description": _first(v.get("description", [""])),
+        }
+        for v in raw
+    ]
+
+
+def build_component_graph_viz(client, component_id):
+    """Build a vis.js-ready node/edge structure centered on a component.
+
+    World model only — shows the component's structural context:
+    - Parent system (via reverse 'contains' edge)
+    - Sibling components (other components under same parent system)
+    - Connected components (via 'connects_to' and 'drives' edges, both directions)
+
+    NO symptoms or causes — those come from docs via RAG, not the graph.
+
+    Returns a dict with nodes, edges, and component_name for the frontend, or None.
+    """
+    # Get component vertex details
+    try:
+        comp_raw = client.submit(
+            "g.V(cid).valueMap(true)", {"cid": component_id}
         ).all().result()
     except Exception as e:
-        logger.warning(f"build_graph_viz symptom lookup failed for {symptom_id}: {e}")
+        logger.warning(f"build_component_graph_viz failed for {component_id}: {e}")
         return None
 
-    if not sym_raw:
+    if not comp_raw:
         return None
 
-    symptom_name = _first(sym_raw[0].get("name", [symptom_id]))
-    symptom_desc = _first(sym_raw[0].get("description", [""]))
-
-    # Reuse the existing cause traversal (already handles all the Cosmos DB quirks)
-    causes = query_causes(client, symptom_id)
-    if not causes:
-        return None
+    comp_name = _first(comp_raw[0].get("name", [component_id]))
+    comp_desc = _first(comp_raw[0].get("description", [""]))
 
     nodes = []
     edges = []
-    seen_components = set()  # deduplicate component nodes
+    seen_ids = {component_id}  # track added node IDs to deduplicate
+    parent_system_ids = []  # track parent system IDs for sibling lookup
 
-    # Symptom node (root of the tree)
+    # Root node: the component itself
     nodes.append({
-        "id": symptom_id,
-        "name": symptom_name,
-        "description": symptom_desc,
-        "type": "symptom",
+        "id": component_id,
+        "name": comp_name,
+        "description": comp_desc,
+        "type": "component",
     })
 
-    for c in causes:
-        # Cause node
-        nodes.append({
-            "id": c["cause_id"],
-            "name": c["cause_desc"][:60] + ("..." if len(c["cause_desc"]) > 60 else ""),
-            "description": c["cause_desc"],
-            "type": "cause",
-            "category": c["category"],
-            "fix_desc": c["fix_desc"],
-        })
+    # Parent system (component ← system via 'contains')
+    try:
+        sys_raw = client.submit(
+            "g.V(cid).in('contains').valueMap(true)", {"cid": component_id}
+        ).all().result()
+        for s in sys_raw:
+            sid = _first(s.get("id"))
+            if sid and sid not in seen_ids:
+                seen_ids.add(sid)
+                parent_system_ids.append(sid)
+                nodes.append({
+                    "id": sid,
+                    "name": _first(s.get("name", [""])),
+                    "description": _first(s.get("description", [""])),
+                    "type": "system",
+                })
+                edges.append({
+                    "from_id": sid,
+                    "to_id": component_id,
+                    "label": "contains",
+                    "priority": None,
+                })
+    except Exception:
+        pass
 
-        # Edge: symptom → cause (with priority label)
-        edges.append({
-            "from_id": symptom_id,
-            "to_id": c["cause_id"],
-            "label": f"P{c['priority']}" if c["priority"] else "",
-            "priority": c["priority"],
-        })
+    # Sibling components — other components under the same parent system
+    for sid in parent_system_ids:
+        try:
+            sib_raw = client.submit(
+                "g.V(sys_id).out('contains').has('type','component').valueMap(true)",
+                {"sys_id": sid},
+            ).all().result()
+            for sib in sib_raw:
+                sib_id = _first(sib.get("id"))
+                if sib_id and sib_id not in seen_ids:
+                    seen_ids.add(sib_id)
+                    nodes.append({
+                        "id": sib_id,
+                        "name": _first(sib.get("name", [""])),
+                        "description": _first(sib.get("description", [""])),
+                        "type": "component",
+                    })
+                    edges.append({
+                        "from_id": sid,
+                        "to_id": sib_id,
+                        "label": "contains",
+                        "priority": None,
+                    })
+        except Exception:
+            pass
 
-        # Component node (deduplicated — multiple causes can involve same component)
-        if c["component_id"] and c["component_id"] not in seen_components:
-            seen_components.add(c["component_id"])
-            nodes.append({
-                "id": c["component_id"],
-                "name": c["component_name"] or c["component_id"],
-                "description": "",
-                "type": "component",
-            })
+    # Outgoing connections: component → other components via connects_to / drives
+    try:
+        out_raw = client.submit(
+            "g.V(cid).outE('connects_to','drives')"
+            ".project('label','to_id','to_name','to_desc','desc')"
+            ".by(label)"
+            ".by(inV().id())"
+            ".by(inV().values('name'))"
+            ".by(coalesce(inV().values('description'), constant('')))"
+            ".by(coalesce(values('description'), constant('')))",
+            {"cid": component_id},
+        ).all().result()
+        for r in out_raw:
+            tid = r.get("to_id", "")
+            if tid and tid not in seen_ids:
+                seen_ids.add(tid)
+                nodes.append({
+                    "id": tid,
+                    "name": r.get("to_name", ""),
+                    "description": r.get("to_desc", ""),
+                    "type": "component",
+                })
+            if tid:
+                edges.append({
+                    "from_id": component_id,
+                    "to_id": tid,
+                    "label": r.get("label", ""),
+                    "priority": None,
+                })
+    except Exception:
+        pass
 
-        # Edge: cause → component
-        if c["component_id"]:
-            edges.append({
-                "from_id": c["cause_id"],
-                "to_id": c["component_id"],
-                "label": "",
-                "priority": None,
-            })
+    # Incoming connections: other components → this component via connects_to / drives
+    try:
+        in_raw = client.submit(
+            "g.V(cid).inE('connects_to','drives')"
+            ".project('label','from_id','from_name','from_desc')"
+            ".by(label)"
+            ".by(outV().id())"
+            ".by(outV().values('name'))"
+            ".by(coalesce(outV().values('description'), constant('')))",
+            {"cid": component_id},
+        ).all().result()
+        for r in in_raw:
+            fid = r.get("from_id", "")
+            if fid and fid not in seen_ids:
+                seen_ids.add(fid)
+                nodes.append({
+                    "id": fid,
+                    "name": r.get("from_name", ""),
+                    "description": r.get("from_desc", ""),
+                    "type": "component",
+                })
+            if fid:
+                edges.append({
+                    "from_id": fid,
+                    "to_id": component_id,
+                    "label": r.get("label", ""),
+                    "priority": None,
+                })
+    except Exception:
+        pass
+
+    # Only return if we found connections beyond the root node
+    if len(nodes) < 2:
+        return None
 
     return {
-        "symptom_name": symptom_name,
+        "component_name": comp_name,
         "nodes": nodes,
         "edges": edges,
     }
@@ -405,14 +418,3 @@ def _first(value):
     if isinstance(value, list) and value:
         return value[0]
     return value
-
-
-def _parse_json_list(value):
-    """Parse a JSON-encoded list stored as a string property."""
-    raw = _first(value)
-    if isinstance(raw, str):
-        try:
-            return json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            return [raw] if raw else []
-    return raw if isinstance(raw, list) else []
