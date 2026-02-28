@@ -284,6 +284,7 @@
         .sidebar-container {
             display: flex;
             flex-direction: column;
+            flex: 0 0 auto;        /* Size from content width, height from cross-axis stretch */
         }
 
         .sidebar-toggle {
@@ -310,10 +311,24 @@
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
             padding: 1.5rem;
             display: none;
+            max-height: calc(100vh - 100px);
+            overflow-y: auto;
         }
 
         .sidebar.open {
             display: block;
+        }
+
+        /* When showing graph, sidebar fills available height so vis.js canvas has room */
+        .sidebar.graph-mode {
+            width: 440px;
+            display: flex;
+            flex-direction: column;
+            overflow-y: hidden;
+            padding: 0.5rem;
+            flex: 1;              /* Fill sidebar-container height (from cross-axis stretch) */
+            min-height: 0;        /* Allow shrinking if needed */
+            max-height: none;     /* Override base .sidebar's max-height */
         }
 
         .sidebar h2 {
@@ -348,11 +363,16 @@
 
         /* Graph visualization panel in sidebar */
         .graph-panel { display: none; }
-        .graph-panel.active { display: block; }
-        .graph-panel h2 { font-size: var(--font-base); margin-bottom: 0.75rem; color: var(--text-primary); }
+        .graph-panel.active {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            min-height: 0;
+        }
         .graph-canvas {
             width: 100%;
-            height: 300px;
+            flex: 1 1 auto;
+            min-height: 200px;
             border: 1px solid var(--border-light);
             border-radius: 8px;
             background: #fafafa;
@@ -364,6 +384,7 @@
             flex-wrap: wrap;
             font-size: var(--font-small);
             color: var(--text-secondary);
+            flex-shrink: 0;
         }
         .graph-legend-item { display: flex; align-items: center; gap: 0.3rem; }
         .graph-legend-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
@@ -373,6 +394,9 @@
             background: #f5f5f5;
             border-radius: 8px;
             border: 1px solid var(--border-light);
+            flex-shrink: 0;
+            max-height: 180px;
+            overflow-y: auto;
         }
         .graph-detail h3 { font-size: var(--font-medium); margin-bottom: 0.25rem; color: var(--text-primary); }
         .graph-detail p { font-size: var(--font-small); color: var(--text-secondary); line-height: 1.4; }
@@ -407,6 +431,19 @@
             font-weight: 600;
         }
         .graph-ask-btn:hover { background: #d96e1e; }
+
+        /* Highlight when graph node click finds matching text in the answer */
+        .graph-highlight {
+            background-color: rgba(5, 152, 179, 0.18);
+            border-left: 4px solid var(--aidan-blue);
+            padding-left: 8px;
+            border-radius: 2px;
+            animation: graph-hl-flash 1.2s ease-out;
+        }
+        @keyframes graph-hl-flash {
+            0%   { background-color: rgba(255, 220, 50, 0.5); }
+            100% { background-color: rgba(5, 152, 179, 0.18); }
+        }
 
         .loading {
             display: flex;
@@ -700,33 +737,31 @@
                 &#9776; Example Questions
             </button>
             <div class="sidebar" id="sidebar">
-                <h2>Example Questions</h2>
-                <div class="example-questions">
-                    <button class="example-btn" onclick="askQuestion('What are the common causes of spindle vibration?')">
-                        What are the common causes of spindle vibration?
-                    </button>
-                    <button class="example-btn" onclick="askQuestion('How do I adjust the stock reel tension?')">
-                        How do I adjust the stock reel tension?
-                    </button>
-                    <button class="example-btn" onclick="askQuestion('What is the cam roll inspection procedure?')">
-                        What is the cam roll inspection procedure?
-                    </button>
-                    <button class="example-btn" onclick="askQuestion('How do I troubleshoot chatter?')">
-                        How do I troubleshoot chatter?
-                    </button>
-                    <button class="example-btn" onclick="askQuestion('What weekly maintenance should I perform?')">
-                        What weekly maintenance should I perform?
-                    </button>
-                </div>
-                <!-- Graph visualization panel — shown when a symptom matches -->
-                <div class="graph-panel" id="graph-panel">
-                    <h2>Diagnostic Path</h2>
-                    <div class="graph-canvas" id="graph-canvas"></div>
-                    <div class="graph-legend">
-                        <span class="graph-legend-item"><span class="graph-legend-dot" style="background:#F3802B"></span> Symptom</span>
-                        <span class="graph-legend-item"><span class="graph-legend-dot" style="background:#c44"></span> Cause</span>
-                        <span class="graph-legend-item"><span class="graph-legend-dot" style="background:#00528A"></span> Component</span>
+                <!-- Example questions section — hidden when graph is active -->
+                <div class="example-questions-section" id="example-questions-section">
+                    <h2>Example Questions</h2>
+                    <div class="example-questions">
+                        <button class="example-btn" onclick="askQuestion('What are the common causes of spindle vibration?')">
+                            What are the common causes of spindle vibration?
+                        </button>
+                        <button class="example-btn" onclick="askQuestion('How do I adjust the stock reel tension?')">
+                            How do I adjust the stock reel tension?
+                        </button>
+                        <button class="example-btn" onclick="askQuestion('What is the cam roll inspection procedure?')">
+                            What is the cam roll inspection procedure?
+                        </button>
+                        <button class="example-btn" onclick="askQuestion('How do I troubleshoot chatter?')">
+                            How do I troubleshoot chatter?
+                        </button>
+                        <button class="example-btn" onclick="askQuestion('What weekly maintenance should I perform?')">
+                            What weekly maintenance should I perform?
+                        </button>
                     </div>
+                </div>
+                <!-- Graph visualization panel — shown when a component matches -->
+                <div class="graph-panel" id="graph-panel">
+                    <div class="graph-canvas" id="graph-canvas"></div>
+                    <div class="graph-legend" id="graph-legend"></div>
                     <div class="graph-detail" id="graph-detail" style="display:none">
                         <div class="detail-type" id="graph-detail-type"></div>
                         <h3 id="graph-detail-name"></h3>
@@ -793,39 +828,66 @@
         // Markdown formatting — shared between initial render and streaming
         // ---------------------------------------------------------------
         function formatMarkdown(text) {
-            // Strip Azure Responses API citation annotation markers: 【6:1†source】
-            // These are raw JSON pointers injected by the API — model already writes human-readable citations
-            text = text.replace(/【\d+:\d+†\w+】/g, '');
-            // Links first (before other transforms that might corrupt URLs)
+            // Strip ALL 【...】 annotation markers — numeric (6:1†source) and text-based
+            text = text.replace(/【[^】]*】/g, '');
+            // Convert markdown links to HTML anchors FIRST
+            // Backend encodes parens as %28/%29, so [^)]+ handles all URLs safely
             text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
-            // Bold
+            // Remove bare URLs in parentheses that weren't linked
+            text = text.replace(/\(https?:\/\/[^)]+\)/g, '');
+            // Bold and inline code
             text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-            // Inline code
             text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
-            // Numbered lists (e.g. "1. item\n2. item")
-            const startsWithNumber = /^1[).]\s/.test(text.trim());
-            if (startsWithNumber) {
-                const items = text.split(/[).]\s*(?=\d{1,2}[).]\s)/);
-                if (items.length > 1) {
-                    text = '<ol>' + items.map(item => {
-                        const cleaned = item.replace(/^\d{1,2}[).]\s*/, '').trim();
-                        return cleaned ? '<li>' + cleaned + '</li>' : '';
-                    }).filter(x => x).join('') + '</ol>';
-                    return text;
+
+            // Split into paragraph blocks on double newline, process each
+            const blocks = text.split(/\n\n+/);
+            const html = blocks.map(block => {
+                block = block.trim();
+                if (!block) return '';
+
+                // Numbered list: block starts with "1." or "1)"
+                if (/^\d{1,2}[).]\s/.test(block)) {
+                    const items = block.split(/\n(?=\d{1,2}[).]\s)/);
+                    if (items.length > 1) {
+                        const lis = items.map(item => {
+                            const cleaned = item.replace(/^\d{1,2}[).]\s*/, '').trim();
+                            return cleaned ? '<li>' + cleaned + '</li>' : '';
+                        }).filter(x => x).join('');
+                        return '<ol>' + lis + '</ol>';
+                    }
                 }
-            }
-            // Bullet lists
-            text = text.replace(/\n- /g, '</li><li>');
-            // Paragraphs
-            text = text.replace(/\n\n/g, '</p><p>');
-            return text;
+
+                // Bullet list: block has lines starting with "- "
+                if (/^- /m.test(block)) {
+                    const lines = block.split('\n');
+                    let result = '';
+                    let inList = false;
+                    for (const line of lines) {
+                        if (/^- /.test(line)) {
+                            if (!inList) { result += '<ul>'; inList = true; }
+                            result += '<li>' + line.replace(/^- /, '').trim() + '</li>';
+                        } else {
+                            if (inList) { result += '</ul>'; inList = false; }
+                            const trimmed = line.trim();
+                            if (trimmed) result += '<p>' + trimmed + '</p>';
+                        }
+                    }
+                    if (inList) result += '</ul>';
+                    return result;
+                }
+
+                // Plain paragraph — single newlines become <br>
+                return '<p>' + block.replace(/\n/g, '<br>') + '</p>';
+            });
+
+            return html.join('');
         }
 
         // ---------------------------------------------------------------
         // Trace panel (collapsible debug info below each response)
         // ---------------------------------------------------------------
         function buildTraceHtml(trace) {
-            if (!trace || (!trace.query_intents?.length && !trace.timings && !trace.graph_symptom)) return '';
+            if (!trace || (!trace.query_intents?.length && !trace.timings)) return '';
             const traceId = 'trace-' + Date.now();
             const t = trace.timings || {};
             const duration = t.total ? (t.total / 1000).toFixed(1) + 's' : '?';
@@ -836,7 +898,7 @@
                     </button>
                     <div id="${traceId}" class="trace-content">
                         <div class="label">Agent: ${trace.agent || 'unknown'}</div>
-                        <div class="label">Mode: ${trace.graph_context_used ? 'V3 Graph RAG' : 'V1 Direct Search'}${trace.graph_symptom ? ' — matched: ' + trace.graph_symptom : ''}</div>
+                        <div class="label">Mode: ${trace.graph_context_used ? 'V3 Graph RAG' : 'V1 Direct Search'}${trace.graph_component ? ' — component: ' + trace.graph_component : ''}</div>
                         ${trace.timings ? `
                         <div class="label">Timing:</div>
                         <div class="timing-bar">
@@ -1140,8 +1202,10 @@
                         buildFeedbackBar(msgIndex);
                     messageHistory.push({ message, response: data.response, reasoning_level: reasoningLevel, turn_id: data.turn_id || '', turn_number: turnNumber });
                     messagesEl.scrollTop = messagesEl.scrollHeight;
-                    // Show graph visualization if symptom matched
-                    if (data.graph_viz) renderGraphViz(data.graph_viz);
+                    // Show graph visualization if component matched
+                    if (data.graph_viz) {
+                        renderGraphViz(data.graph_viz);
+                    }
                 }
 
             } catch (err) {
@@ -1153,83 +1217,143 @@
         }
 
         // ---------------------------------------------------------------
-        // Graph visualization — diagnostic path in sidebar
+        // Graph visualization — world model in sidebar
         // ---------------------------------------------------------------
         let graphNetwork = null;
+        let graphNodes = null;    // vis.js DataSet — stored for click-to-highlight
 
         function renderGraphViz(graphData) {
             if (!graphData || !graphData.nodes || graphData.nodes.length === 0) return;
 
-            const exampleQuestionsEl = document.querySelector('.example-questions');
+            const exampleSectionEl = document.getElementById('example-questions-section');
             const graphPanelEl = document.getElementById('graph-panel');
             const toggleBtn = document.getElementById('sidebar-toggle');
 
-            // Hide example questions, show graph panel
-            if (exampleQuestionsEl) exampleQuestionsEl.style.display = 'none';
+            // Hide example questions section, show graph panel
+            if (exampleSectionEl) exampleSectionEl.style.display = 'none';
             graphPanelEl.classList.add('active');
 
-            // Update toggle button text and auto-open sidebar
-            toggleBtn.innerHTML = '&#9776; Diagnostic Path';
-            sidebarEl.classList.add('open');
+            toggleBtn.innerHTML = '&#9776; Machine Graph';
+            sidebarEl.classList.add('open', 'graph-mode');
 
-            // Color map for node types
+            // Brand colors for world model node types
             const colors = {
-                symptom: { background: '#F3802B', border: '#d96e1e' },
-                cause: { background: '#c44', border: '#a33' },
-                component: { background: '#00528A', border: '#003d66' },
+                component:     { background: '#0598B3', border: '#047a91' },
+                system:        { background: '#6B4C9A', border: '#503a75' },
             };
 
             // Build vis.js nodes
-            const nodes = new vis.DataSet(graphData.nodes.map(n => ({
-                id: n.id,
-                label: wordWrap(n.name, 20),
-                color: colors[n.type] || colors.component,
-                font: { color: 'white', size: 13, multi: 'html' },
-                shape: 'box',
-                margin: { top: 6, bottom: 6, left: 8, right: 8 },
-                borderWidth: 2,
-                widthConstraint: { maximum: 180 },
-                _data: n,  // store full data for detail panel
-            })));
+            const nodes = new vis.DataSet(graphData.nodes.map(n => {
+                const sizes = { system: 22, component: 12 };
+                return {
+                    id: n.id,
+                    label: wordWrap(n.name || n.id, 14),
+                    color: colors[n.type] || colors.component,
+                    font: { color: '#333', size: n.type === 'system' ? 11 : 10, face: 'Arial' },
+                    shape: 'dot',
+                    size: sizes[n.type] || 12,
+                    borderWidth: 2,
+                    _data: n,
+                };
+            }));
+            graphNodes = nodes;
 
-            // Build vis.js edges
-            const edges = new vis.DataSet(graphData.edges.map((e, i) => ({
-                id: 'e' + i,
-                from: e.from_id,
-                to: e.to_id,
-                label: e.priority ? 'P' + e.priority : '',
-                arrows: 'to',
-                color: { color: '#999', highlight: '#666' },
-                font: { size: 10, color: '#888' },
-                smooth: { type: 'cubicBezier' },
-            })));
+            // Build legend — only show types present in this graph
+            const typesPresent = new Set(graphData.nodes.map(n => n.type));
+            const legendItems = [];
+            if (typesPresent.has('system'))    legendItems.push({ color: '#6B4C9A', label: 'System' });
+            if (typesPresent.has('component')) legendItems.push({ color: '#0598B3', label: 'Component' });
 
-            // Render the graph with hierarchical layout (symptom → causes → components)
+            const legendEl = document.getElementById('graph-legend');
+            legendEl.innerHTML = legendItems.map(item =>
+                '<span class="graph-legend-item">' +
+                '<span class="graph-legend-dot" style="background:' + item.color + '"></span> ' +
+                item.label + '</span>'
+            ).join('');
+
+            // Build vis.js edges — track pairs to curve duplicates apart
+            const edgePairCount = {};
+            const edgeData = graphData.edges.map((e, i) => {
+                // Create a pair key (order-independent) to detect duplicate edges
+                const pairKey = [e.from_id, e.to_id].sort().join('|');
+                edgePairCount[pairKey] = (edgePairCount[pairKey] || 0) + 1;
+                const count = edgePairCount[pairKey];
+                // Alternate curve direction for duplicate edges so they don't overlap
+                const smoothType = count <= 1 ? 'cubicBezier' : (count % 2 === 0 ? 'curvedCW' : 'curvedCCW');
+                const roundness = count <= 1 ? 0.5 : 0.3 + (count * 0.1);
+                // Only label non-obvious edges — "contains" is clear from hierarchy
+                const edgeLabel = (e.label === 'contains') ? '' :
+                    (e.priority ? 'P' + e.priority : (e.label || ''));
+                return {
+                    id: 'e' + i,
+                    from: e.from_id,
+                    to: e.to_id,
+                    label: edgeLabel,
+                    arrows: { to: { enabled: true, scaleFactor: 0.5 } },
+                    color: { color: '#bbb', highlight: '#666' },
+                    font: { size: 9, color: '#999', strokeWidth: 2, strokeColor: '#fff' },
+                    smooth: { type: smoothType, roundness: roundness },
+                    width: 1,
+                };
+            });
+            const edges = new vis.DataSet(edgeData);
+
+            // Destroy previous graph if re-rendering (e.g. second question)
+            if (graphNetwork) {
+                graphNetwork.destroy();
+                graphNetwork = null;
+            }
+
+            // Force browser to resolve flex layout before vis.js reads container dimensions
+            // (sidebar just went from display:none to display:flex — reflow needed)
             const container = document.getElementById('graph-canvas');
+            void container.offsetHeight;
+            console.log('[graph] container dimensions:', container.clientWidth, 'x', container.clientHeight);
+
+            // Left-to-right layout: system on left → components spreading vertically
+            // LR fits the tall/narrow sidebar better than UD (440px wide, lots of vertical room)
+            const nodeCount = graphData.nodes.length;
+            const spacing = nodeCount <= 6 ? 100 : nodeCount <= 12 ? 70 : 50;
+            const levelSep = nodeCount <= 6 ? 180 : nodeCount <= 12 ? 150 : 120;
             graphNetwork = new vis.Network(container, { nodes, edges }, {
                 layout: {
                     hierarchical: {
-                        direction: 'UD',
+                        direction: 'LR',
                         sortMethod: 'directed',
-                        levelSeparation: 80,
-                        nodeSpacing: 120,
+                        levelSeparation: levelSep,
+                        nodeSpacing: spacing,
                     }
                 },
                 physics: false,
                 interaction: { zoomView: true, dragView: true, hover: true },
             });
 
-            // Fit all nodes into view after rendering
-            graphNetwork.once('afterDrawing', () => graphNetwork.fit({ animation: false }));
+            // Fit graph into canvas with padding — double-tap to handle layout settling
+            graphNetwork.once('afterDrawing', () => {
+                setTimeout(() => {
+                    graphNetwork.fit({ padding: 30, animation: false });
+                    // Second fit after a beat — catches any late layout adjustments
+                    setTimeout(() => graphNetwork.fit({ padding: 30, animation: false }), 150);
+                }, 100);
+            });
 
-            // Click a node → show detail panel
             graphNetwork.on('click', function(params) {
                 if (params.nodes.length > 0) {
                     const nodeId = params.nodes[0];
                     const node = nodes.get(nodeId);
-                    if (node && node._data) showGraphDetail(node._data);
+                    console.log('[graph-click] nodeId:', nodeId, '_data:', node?._data?.name);
+                    if (node && node._data) {
+                        try { showGraphDetail(node._data); }
+                        catch (e) { console.error('[graph-click] showGraphDetail error:', e); }
+                        try { highlightAnswerFromGraph(node._data); }
+                        catch (e) { console.error('[graph-click] highlightAnswer error:', e); }
+                    }
                 } else {
+                    // Clicked empty space — hide detail panel and clear answer highlights
                     document.getElementById('graph-detail').style.display = 'none';
+                    document.querySelectorAll('.graph-highlight').forEach(el => {
+                        el.classList.remove('graph-highlight');
+                    });
                 }
             });
         }
@@ -1245,23 +1369,16 @@
             detailEl.style.display = 'block';
 
             // Type badge
-            const typeColors = { symptom: '#F3802B', cause: '#c44', component: '#00528A' };
+            const typeColors = { component: '#0598B3', system: '#6B4C9A' };
             typeEl.textContent = (nodeData.type || '').charAt(0).toUpperCase() + (nodeData.type || '').slice(1);
             typeEl.style.background = typeColors[nodeData.type] || '#666';
 
             // Name and description
             nameEl.textContent = nodeData.name || nodeData.id;
             descEl.textContent = nodeData.description || '';
+            fixEl.style.display = 'none';
 
-            // Fix suggestion (for cause nodes)
-            if (nodeData.fix_desc) {
-                fixEl.style.display = 'block';
-                fixEl.textContent = 'Fix: ' + nodeData.fix_desc;
-            } else {
-                fixEl.style.display = 'none';
-            }
-
-            // "Ask about this" button — components and symptoms get different questions
+            // "Ask about this" button
             if (nodeData.type === 'component') {
                 askBtn.style.display = 'block';
                 askBtn.textContent = 'Ask about ' + nodeData.name;
@@ -1269,11 +1386,11 @@
                     inputEl.value = 'Tell me about the ' + nodeData.name + ' on the Davenport';
                     sendMessage();
                 };
-            } else if (nodeData.type === 'symptom') {
+            } else if (nodeData.type === 'system') {
                 askBtn.style.display = 'block';
-                askBtn.textContent = 'Troubleshoot this';
+                askBtn.textContent = 'Ask about ' + nodeData.name;
                 askBtn.onclick = () => {
-                    inputEl.value = 'I\'m seeing ' + nodeData.name + ' - what should I check?';
+                    inputEl.value = 'How does the ' + nodeData.name + ' work on the Davenport?';
                     sendMessage();
                 };
             } else {
@@ -1281,14 +1398,100 @@
             }
         }
 
+        function highlightAnswerFromGraph(nodeData) {
+            // When a graph node is clicked, highlight matching text in the answer.
+            // Uses the node name as primary search term since the LLM answer will
+            // mention the same component names that appear in the graph.
+
+            // Clear any previous highlights first
+            document.querySelectorAll('.graph-highlight').forEach(el => {
+                el.classList.remove('graph-highlight');
+            });
+
+            const name = (nodeData.name || '').toLowerCase().trim();
+            const desc = (nodeData.description || '').toLowerCase().trim();
+            console.log('[highlight] name:', name, 'desc:', desc);
+            if (!name || name.length < 3) { console.log('[highlight] bail: name too short'); return; }
+
+            // Find the most recent assistant message
+            const assistantMsgs = document.querySelectorAll('.message.assistant');
+            console.log('[highlight] assistant msgs found:', assistantMsgs.length);
+            if (assistantMsgs.length === 0) return;
+            const latestMsg = assistantMsgs[assistantMsgs.length - 1];
+
+            // Quick check: does the answer mention this node or its keywords?
+            const msgText = latestMsg.textContent.toLowerCase();
+            const stopWords = new Set(['the','and','for','that','this','with','from','are','was',
+                'has','have','not','but','can','will','about','into','over','also','been',
+                'check','ensure','verify','inspect','replace','adjust','install','remove']);
+            // Use both name and description as keyword sources
+            const nameWords = name.split(/\s+/).filter(w => w.length > 3 && !stopWords.has(w));
+            console.log('[highlight] nameWords:', nameWords);
+            if (!msgText.includes(name)) {
+                // For component graphs: even 1 distinctive keyword match is useful
+                const hits = nameWords.filter(w => msgText.includes(w)).length;
+                console.log('[highlight] keyword hits in full text:', hits);
+                if (hits < 1) { console.log('[highlight] bail: no keyword hits'); return; }
+            }
+
+            // Search all visible elements in the message (broad selector for robustness)
+            const blocks = latestMsg.querySelectorAll('li, p, strong, ol, ul');
+            let matches = [];
+            console.log('[highlight] blocks found:', blocks.length);
+
+            // Build search keywords: distinctive words from name + description
+            const keywords = [...new Set([...nameWords,
+                ...(desc || '').split(/\s+/).filter(w => w.length > 3 && !stopWords.has(w))])
+            ].slice(0, 8);
+            console.log('[highlight] keywords:', keywords);
+
+            for (const block of blocks) {
+                const blockText = block.textContent.toLowerCase();
+                // Best match: full node name appears in this block
+                if (blockText.includes(name)) {
+                    matches.push({ el: block, score: 10 });
+                    continue;
+                }
+                // For component graphs: any 1 distinctive keyword hit highlights the block
+                const score = keywords.filter(w => blockText.includes(w)).length;
+                if (score >= 1) {
+                    matches.push({ el: block, score });
+                }
+            }
+
+            console.log('[highlight] matches:', matches.length, matches.map(m => ({tag: m.el.tagName, score: m.score, text: m.el.textContent.substring(0, 40)})));
+
+            // If no sub-elements matched, check if the message div itself has keywords
+            if (matches.length === 0 && nameWords.some(w => msgText.includes(w))) {
+                console.log('[highlight] fallback: highlighting entire message div');
+                latestMsg.classList.add('graph-highlight');
+                return;
+            }
+
+            // Pick the best matches (highest score first), skip parents of already-matched children
+            matches.sort((a, b) => b.score - a.score);
+            const highlighted = new Set();
+            for (const m of matches) {
+                // Skip if this element contains an already-highlighted child
+                if ([...highlighted].some(h => m.el.contains(h))) continue;
+                m.el.classList.add('graph-highlight');
+                highlighted.add(m.el);
+                if (highlighted.size === 1) {
+                    m.el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            }
+            console.log('[highlight] highlighted count:', highlighted.size);
+        }
+
         function resetGraphPanel() {
             // Reset sidebar to example questions (called on clear chat)
             const graphPanelEl = document.getElementById('graph-panel');
-            const exampleQuestionsEl = document.querySelector('.example-questions');
+            const exampleSectionEl = document.getElementById('example-questions-section');
             const toggleBtn = document.getElementById('sidebar-toggle');
 
             graphPanelEl.classList.remove('active');
-            if (exampleQuestionsEl) exampleQuestionsEl.style.display = '';
+            sidebarEl.classList.remove('graph-mode');
+            if (exampleSectionEl) exampleSectionEl.style.display = '';
             document.getElementById('graph-detail').style.display = 'none';
             toggleBtn.innerHTML = '&#9776; Example Questions';
 
@@ -1296,6 +1499,7 @@
                 graphNetwork.destroy();
                 graphNetwork = null;
             }
+            graphNodes = null;
         }
 
         // Helper: wrap long text for vis.js node labels

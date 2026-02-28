@@ -63,7 +63,7 @@ _openai_client = None
 _table_client = None
 _blob_service_client = None
 _gremlin_client = None     # V3 Graph RAG — Cosmos DB Gremlin
-_symptom_cache = None      # V3 Graph RAG — cached symptom list for classification
+_component_cache = None    # V3 Graph RAG — cached component list for classification
 _direct_openai_client = None  # Direct AOAI client for classification (bypasses Foundry project routing)
 _world_model_cache = None     # V3 Layer 1 — cached machine structural summary
 
@@ -170,32 +170,35 @@ def get_world_model():
     return _world_model_cache
 
 
-def classify_symptom(message):
-    """Classify user question into a known graph symptom. Returns (symptom_id, symptom_name) or (None, None).
+def classify_component(message):
+    """Identify which machine component the question relates to.
 
-    Uses gpt-5-mini via the direct AOAI client (not Foundry project client)
-    to match against the symptom list from Cosmos DB.
-    Cached symptom list is loaded once and refreshed on function app restart.
+    The graph is a world model — it shows machine structure, not diagnostics.
+    This classifier maps natural language to the nearest component so we can
+    show it in context within the graph sidebar.
+
+    Returns component ID string, or None if no component identified.
     """
-    global _symptom_cache
+    global _component_cache
 
     gremlin = get_gremlin_client()
     if not gremlin:
-        return None, None
+        return None
 
-    # Load symptom list once (refreshed on function app restart)
-    if _symptom_cache is None:
-        import graph_helper
-        _symptom_cache = graph_helper.query_all_symptoms(gremlin)
-        logging.info(f"Loaded {len(_symptom_cache)} symptoms for classification")
+    import graph_helper
 
-    if not _symptom_cache:
-        return None, None
+    # Load component list once (refreshed on function app restart)
+    if _component_cache is None:
+        _component_cache = graph_helper.query_all_components(gremlin)
+        logging.info(f"Loaded {len(_component_cache)} components for classification")
 
-    # Build the symptom list for the LLM prompt
-    symptom_list = "\n".join(
-        f"- {s['id']}: {s['name']} (aliases: {', '.join(s.get('aliases', []))})"
-        for s in _symptom_cache
+    if not _component_cache:
+        return None
+
+    # Include descriptions so the LLM can fuzzy-match questions about related parts
+    component_list = "\n".join(
+        f"- {c['id']}: {c['name']} — {c['description']}"
+        for c in _component_cache
     )
 
     try:
@@ -203,53 +206,52 @@ def classify_symptom(message):
             model="gpt-5-mini",
             messages=[
                 {"role": "system", "content": (
-                    "You classify Davenport Model B screw machine questions into known symptom categories.\n\n"
-                    f"Known symptoms:\n{symptom_list}\n\n"
-                    "Return JSON: {\"symptom_id\": \"the_id\"} if the question matches a symptom, "
-                    "or {\"symptom_id\": null} if it doesn't (e.g., general info questions, definitions, part numbers)."
+                    "You identify which component of a Davenport Model B screw machine "
+                    "the user is asking about. Match to the most relevant component from "
+                    "the list below. The goal is to show the user where this part sits "
+                    "in the machine's structure.\n\n"
+                    f"Known components:\n{component_list}\n\n"
+                    "Common aliases: 'stock reel' and 'reel tension' relate to bar_stock "
+                    "(the reel feeds bar stock). 'Cam rolls' relate to tooling. "
+                    "'T blade' is the cutoff_tool.\n\n"
+                    "If the question mentions a part or mechanism related to any component, "
+                    "pick the closest match. Only return null if the question is purely "
+                    "general (e.g., 'what maintenance should I do weekly').\n\n"
+                    'Return JSON: {"id": "the_component_id"} or {"id": null}.'
                 )},
                 {"role": "user", "content": message},
             ],
             response_format={"type": "json_object"},
         )
         result = json.loads(resp.choices[0].message.content)
-        sid = result.get("symptom_id")
-        if sid:
-            # Look up the display name
-            name = next((s["name"] for s in _symptom_cache if s["id"] == sid), sid)
-            logging.info(f"Symptom classified: {sid} ({name})")
-            return sid, name
-    except Exception as e:
-        logging.warning(f"classify_symptom failed: {e}")
+        comp_id = result.get("id")
 
-    return None, None
+        if comp_id:
+            name = next((c["name"] for c in _component_cache if c["id"] == comp_id), comp_id)
+            logging.info(f"Component classified: {comp_id} ({name})")
+            return comp_id
+
+    except Exception as e:
+        logging.warning(f"classify_component failed: {e}")
+
+    return None
 
 
 def get_graph_context_for_message(message):
-    """V3 Graph RAG Layer 2: classify symptom and build diagnostic context.
+    """Graph RAG: identify the relevant component for the world model graph.
 
-    Returns (diagnostic_context_string, symptom_id) — both empty/None if graph
-    is unavailable or the question doesn't match a known symptom.
-    This is the conditional layer — only activates for troubleshooting questions.
+    Returns (context_string, component_id).
+    Graph = world model (machine structure), docs = diagnostics (via RAG).
     """
     try:
-        symptom_id, symptom_name = classify_symptom(message)
-        if not symptom_id:
-            return "", None
-
-        import graph_helper
-        gremlin = get_gremlin_client()
-        if not gremlin:
-            return "", None
-
-        graph_context = graph_helper.get_graph_context(gremlin, symptom_id)
-        if graph_context:
-            logging.info(f"Graph context matched: {symptom_id} ({symptom_name}), {len(graph_context)} chars")
-        return graph_context, symptom_id
+        comp_id = classify_component(message)
+        if comp_id:
+            return "", comp_id
 
     except Exception as e:
         logging.warning(f"Graph context failed (proceeding without): {e}")
-        return "", None
+
+    return "", None
 
 
 def log_to_lake(folder, record):
@@ -371,7 +373,8 @@ def extract_blob_urls_from_response(response):
 
         # Also check the output_text for blob URLs the agent may have included directly
         output_text = getattr(response, 'output_text', '') or ''
-        for url in re.findall(r'https://\w+\.blob\.core\.windows\.net/[^\s)"\]]+', output_text):
+        # Match blob URLs to file extension — allows parens in path (video names like "(part 1)")
+        for url in re.findall(r'https://\w+\.blob\.core\.windows\.net/[\w-]+/[^\s"<>]+?\.(?:pdf|md|docx)', output_text):
             filename = unquote(url.split("/")[-1])
             name = filename.rsplit(".", 1)[0]
             if name and name.lower() not in url_lookup:
@@ -470,13 +473,14 @@ def process_citations(response, text):
             text
         )
 
-        # Strip any remaining bare 【N:M†source】 markers (e.g. after inline citations)
-        result = re.sub(r'【\d+:\d+†\w+】', '', result)
+        # Strip any remaining 【...】 markers — catches both numeric (6:1†source)
+        # and text-based (【Instruction Book - Part 1 of 3】) annotation formats
+        result = re.sub(r'【[^】]*】', '', result)
         return result
 
     except Exception as e:
         logging.warning(f"process_citations failed: {e}")
-        return re.sub(r'【\d+:\d+†\w+】', '', text)
+        return re.sub(r'【[^】]*】', '', text)
 
 
 def convert_inline_url_citations(text):
@@ -508,6 +512,78 @@ def convert_inline_url_citations(text):
         return text
 
 
+def convert_embedded_url_citations(text):
+    """Convert (Name (URL)) and (Name URL) patterns to [Name](URL) markdown links.
+
+    The agent sometimes embeds a URL inside the same parenthetical as the citation
+    name, e.g., (Instruction Book (https://blob.url/file.pdf)) or
+    (Instruction Book https://blob.url/file.pdf). These need converting to
+    [Name](URL) before the fallback citation linker runs, or the fallback will
+    double-encode the URL.
+
+    Must run AFTER convert_inline_url_citations, BEFORE fallback_link_citations.
+    """
+    try:
+        # Pattern 1: (Name (https://URL)) — URL inside nested parens
+        result = re.sub(
+            r'\(([^()]+?)\s*\((https?://[^)]+)\)\)',
+            lambda m: f"[{m.group(1).strip()}]({m.group(2).strip()})",
+            text
+        )
+
+        # Pattern 2: (Name https://URL) — URL directly in same parens, no nesting
+        result = re.sub(
+            r'\(([^()]+?)\s+(https?://[^\s)]+)\)',
+            lambda m: f"[{m.group(1).strip()}]({m.group(2).strip()})",
+            result
+        )
+
+        return result
+    except Exception as e:
+        logging.warning(f"convert_embedded_url_citations failed: {e}")
+        return text
+
+
+def convert_bracket_citations(text):
+    """Convert [[Name]] double-bracket citations to (Name) format.
+
+    The agent sometimes writes citations as [[Document Name]] instead of
+    (Document Name). This normalizes them so fallback_link_citations can
+    match and link them.
+    """
+    try:
+        return re.sub(r'\[\[([^\]]+)\]\]', r'(\1)', text)
+    except Exception as e:
+        logging.warning(f"convert_bracket_citations failed: {e}")
+        return text
+
+
+def convert_single_bracket_citations(text):
+    """Convert [Name] single-bracket citations to (Name) format.
+
+    The agent often writes citations as [Document Name] without a URL.
+    This normalizes them to (Name) so fallback_link_citations can
+    fuzzy-match against known blob URLs.
+
+    Skips: markdown links [Name](url), category tags [Machine], short names.
+    """
+    # Known category tags the agent uses — never convert these
+    category_tags = {"Tooling", "Machine", "Feeds & Speeds", "Work Holding",
+                     "Stock/Material", "Stock", "General"}
+    try:
+        def replace_bracket(match):
+            name = match.group(1).strip()
+            if name in category_tags or len(name) < 8:
+                return match.group(0)  # leave as-is
+            return f"({name})"
+
+        # Match [Name] NOT followed by ( (which would be a markdown link)
+        return re.sub(r'\[([^\]]+)\](?!\()', replace_bracket, text)
+    except Exception as e:
+        logging.warning(f"convert_single_bracket_citations failed: {e}")
+        return text
+
+
 def fallback_link_citations(text, response):
     """Third pass: link any remaining (Name) citations that earlier passes missed.
 
@@ -516,6 +592,10 @@ def fallback_link_citations(text, response):
     result snippets (via [source: URL] prefixes) to fuzzy-match unlinked
     (Name) patterns.
 
+    If blob URL extraction finds nothing (common in streaming responses where
+    MCP tool output may not be in the completed event), falls back to constructing
+    blob URLs from the known storage account + knowledge base containers.
+
     Must run AFTER process_citations, clean_search_service_urls, and
     convert_inline_url_citations.
     """
@@ -523,26 +603,112 @@ def fallback_link_citations(text, response):
         # Use blob URLs from search results — NOT annotation URLs (which point to search service)
         url_lookup = extract_blob_urls_from_response(response)
 
-        if not url_lookup:
-            return text  # no blob URLs found in response
-
         # Known category tags that should never be linked
         category_tags = {"Tooling", "Machine", "Feeds & Speeds", "Work Holding", "Stock/Material"}
+
+        # Known knowledge base containers and their document patterns
+        # Used as fallback when blob URL extraction returns nothing (streaming responses)
+        known_containers = [
+            "maintenance-manuals", "engineering-tips", "technical-tips",
+            "troubleshooting", "video-training",
+        ]
+
+        def build_blob_url_fallback(name):
+            """Construct a blob URL by matching name keywords to the right container.
+
+            The unified index stores docs as: <container>/<filename>.pdf or .md
+            The agent cites them by display name (filename minus extension).
+            We match keywords in the name to pick the most likely container.
+
+            SAFETY: If the name already contains a URL, extract and return it
+            instead of constructing a new one (prevents double-nesting).
+            """
+            from urllib.parse import quote
+
+            # Guard: if name already contains a URL, extract and return it directly
+            url_match = re.search(r'https?://[^\s)"\]]+', name)
+            if url_match:
+                return url_match.group(0)
+
+            name_lower = name.lower()
+
+            # Check YOUTUBE_VIDEO_MAP first — video names don't always have "video"/"training" keywords
+            for video_name in YOUTUBE_VIDEO_MAP:
+                if name_lower in video_name.lower() or video_name.lower() in name_lower:
+                    container = "video-training"
+                    url = f"https://{STORAGE_ACCOUNT}.blob.core.windows.net/{container}/{quote(video_name)}.md"
+                    return url
+
+            # Map name keywords → most likely container
+            if any(w in name_lower for w in ["manual", "instruction", "operation"]):
+                container = "maintenance-manuals"
+            elif "troubleshoot" in name_lower:
+                container = "troubleshooting"
+            elif "training" in name_lower or "video" in name_lower:
+                container = "video-training"
+                # Video transcripts are markdown
+                url = f"https://{STORAGE_ACCOUNT}.blob.core.windows.net/{container}/{quote(name)}.md"
+                return url
+            elif "engineering" in name_lower:
+                container = "engineering-tips"
+            elif "tips" in name_lower or "technical" in name_lower:
+                container = "technical-tips"
+            else:
+                # Default to maintenance-manuals — most citations are from there
+                container = "maintenance-manuals"
+
+            url = f"https://{STORAGE_ACCOUNT}.blob.core.windows.net/{container}/{quote(name)}.pdf"
+            return url
+
+        def safe_markdown_link(display, url):
+            """Build [display](url) with parens encoded so markdown doesn't break."""
+            safe_url = url.replace('(', '%28').replace(')', '%29')
+            return f"[{display}]({safe_url})"
 
         def replace_unlinked(match):
             name = match.group(1).strip()
             # Skip category tags and very short names (likely not citations)
             if name in category_tags or len(name) < 8:
                 return match.group(0)
+
+            # If the name itself contains a URL, extract it and link directly
+            # (prevents double-nesting when agent embeds URL in citation text)
+            embedded_url = re.search(r'https?://[^\s)"\]]+', name)
+            if embedded_url:
+                url = embedded_url.group(0)
+                # Derive display name: strip the URL and any trailing extension
+                clean_name = re.sub(r'https?://[^\s)"\]]+', '', name).strip()
+                clean_name = re.sub(r'\.\w{2,4}$', '', clean_name).strip(' .')
+                if not clean_name:
+                    from urllib.parse import unquote
+                    filename = unquote(url.split("/")[-1])
+                    clean_name = filename.rsplit(".", 1)[0]
+                return safe_markdown_link(clean_name, url)
+
             name_lower = name.lower()
-            # Try substring containment match against blob URL display names
+            # First try: match against actual blob URLs from response
             for key, (display, url) in url_lookup.items():
                 if key and (name_lower in key or key in name_lower):
-                    return f"([{display}]({url}))"
+                    return safe_markdown_link(display, url)
+            # Second try: check if name matches a known video transcript
+            for video_name, yt_id in YOUTUBE_VIDEO_MAP.items():
+                if name_lower in video_name.lower() or video_name.lower() in name_lower:
+                    yt_url = f"https://www.youtube.com/watch?v={yt_id}"
+                    return safe_markdown_link(video_name, yt_url)
+
+            # Third try: construct blob URL from known storage layout
+            # Only for names that look like document citations (contain common doc words)
+            doc_indicators = ["manual", "instruction", "book", "part", "training",
+                              "tips", "troubleshooting", "operations", "pages"]
+            if any(ind in name_lower for ind in doc_indicators):
+                url = build_blob_url_fallback(name)
+                if url:
+                    return safe_markdown_link(name, url)
             return match.group(0)  # no match found, leave as-is
 
         # Match (Name) that isn't part of a markdown link — negative lookbehind for ]
-        result = re.sub(r'(?<!\])\(([^()]+)\)(?![\[(])', replace_unlinked, text)
+        # Allows one level of balanced inner parens so video names like "(part 1)" work
+        result = re.sub(r'(?<!\])\(([^()]+(?:\([^()]*\)[^()]*)*)\)(?![\[(])', replace_unlinked, text)
         return result
 
     except Exception as e:
@@ -671,17 +837,17 @@ async def chat(req: Request) -> JSONResponse:
         t_graph = time.time()
         # Layer 1: Always-present machine world model (cached)
         world_model = get_world_model()
-        # Layer 2: Conditional diagnostic checklist (symptom match)
-        diagnostic_context, symptom_id = get_graph_context_for_message(message)
+        # Layer 2: Classify question → component match (for graph sidebar)
+        component_context, component_id = get_graph_context_for_message(message)
         # Assemble agent input with available context
         parts = []
         if world_model:
             parts.append(world_model)
-        if diagnostic_context:
-            parts.append(diagnostic_context)
+        if component_context:
+            parts.append(component_context)
         parts.append(f"USER QUESTION:\n{message}")
         agent_input = "\n\n".join(parts)
-        graph_active = bool(world_model or diagnostic_context)
+        graph_active = bool(world_model or component_context)
         timings["graph_context"] = round((time.time() - t_graph) * 1000)
 
         t2 = time.time()
@@ -696,13 +862,16 @@ async def chat(req: Request) -> JSONResponse:
 
         trace = extract_reasoning_trace(response)
         trace["timings"] = timings
-        trace["graph_symptom"] = symptom_id or ""
+        trace["graph_component"] = component_id or ""
         trace["graph_context_used"] = graph_active
 
-        # Citation pipeline: markers → strip search URLs → inline URLs → fallback (Name) → YouTube
+        # Citation pipeline: markers → strip search URLs → inline URLs → embedded URLs → fallback (Name) → YouTube
         response_text = process_citations(response, response.output_text)
         response_text = clean_search_service_urls(response_text)
         response_text = convert_inline_url_citations(response_text)
+        response_text = convert_embedded_url_citations(response_text)
+        response_text = convert_bracket_citations(response_text)
+        response_text = convert_single_bracket_citations(response_text)
         response_text = fallback_link_citations(response_text, response)
         response_text = transform_transcript_urls_to_youtube(response_text)
         logging.info(f"Timings: {timings}")
@@ -732,21 +901,20 @@ async def chat(req: Request) -> JSONResponse:
             "categories_tagged": categories,
             "source_count": len(sources),
             "category_count": len(categories),
-            "graph_symptom_matched": symptom_id or "",
+            "graph_component_matched": component_id or "",
             "graph_context_provided": graph_active,
         })
 
-        # V3: Build graph visualization data + track usage (fire-and-forget)
+        # Build graph visualization — component in the world model
         graph_viz = None
-        if symptom_id:
-            try:
-                import graph_helper
-                gremlin = get_gremlin_client()
-                if gremlin:
-                    graph_viz = graph_helper.build_graph_viz(gremlin, symptom_id)
-                    graph_helper.increment_hit_count(gremlin, [symptom_id])
-            except Exception:
-                pass
+        try:
+            import graph_helper
+            gremlin = get_gremlin_client()
+            if gremlin and component_id:
+                graph_viz = graph_helper.build_component_graph_viz(gremlin, component_id)
+                graph_helper.increment_hit_count(gremlin, [component_id])
+        except Exception:
+            pass
 
         result = {
             "response": response_text,
@@ -809,17 +977,17 @@ async def chat_stream(req: Request) -> StreamingResponse:
     # V3 Graph RAG: two-layer context (before streaming starts)
     # Layer 1: Always-present machine world model (cached)
     world_model = get_world_model()
-    # Layer 2: Conditional diagnostic checklist (symptom match)
-    diagnostic_context, symptom_id = get_graph_context_for_message(message)
+    # Layer 2: Classify question → component match (for graph sidebar)
+    component_context, component_id = get_graph_context_for_message(message)
     # Assemble agent input with available context
     parts = []
     if world_model:
         parts.append(world_model)
-    if diagnostic_context:
-        parts.append(diagnostic_context)
+    if component_context:
+        parts.append(component_context)
     parts.append(f"USER QUESTION:\n{message}")
     agent_input = "\n\n".join(parts)
-    graph_active = bool(world_model or diagnostic_context)
+    graph_active = bool(world_model or component_context)
 
     async def event_generator():
         # Send conversation_id immediately so the frontend can persist it
@@ -852,16 +1020,19 @@ async def chat_stream(req: Request) -> StreamingResponse:
                     # Signals end of stream — use accumulated deltas or pull full text
                     if not full_text:
                         full_text = getattr(event.response, "output_text", "")
-                    # Citation pipeline: markers → strip search URLs → inline URLs → fallback (Name) → YouTube
+                    # Citation pipeline: markers → strip search URLs → inline URLs → embedded URLs → fallback (Name) → YouTube
                     full_text = process_citations(event.response, full_text)
                     full_text = clean_search_service_urls(full_text)
                     full_text = convert_inline_url_citations(full_text)
+                    full_text = convert_embedded_url_citations(full_text)
+                    full_text = convert_bracket_citations(full_text)
+                    full_text = convert_single_bracket_citations(full_text)
                     full_text = fallback_link_citations(full_text, event.response)
                     full_text = transform_transcript_urls_to_youtube(full_text)
                     elapsed_ms = round((time.time() - t_start) * 1000)
                     trace = extract_reasoning_trace(event.response)
                     trace["timings"] = {"total": elapsed_ms}
-                    trace["graph_symptom"] = symptom_id or ""
+                    trace["graph_component"] = component_id or ""
                     trace["graph_context_used"] = graph_active
                     # Extract sources before yielding so trace includes the count
                     sources = extract_sources_cited(full_text)
@@ -869,16 +1040,15 @@ async def chat_stream(req: Request) -> StreamingResponse:
                     trace["sources_found"] = len(sources)
                     turn_id = generate_turn_id()
 
-                    # Build graph viz and send before done event so frontend can render sidebar
+                    # Build component graph viz — send before done event
                     graph_viz = None
-                    if symptom_id:
-                        try:
-                            import graph_helper as gh_viz
-                            gremlin_viz = get_gremlin_client()
-                            if gremlin_viz:
-                                graph_viz = gh_viz.build_graph_viz(gremlin_viz, symptom_id)
-                        except Exception:
-                            pass
+                    try:
+                        import graph_helper as gh_viz
+                        gremlin_viz = get_gremlin_client()
+                        if gremlin_viz and component_id:
+                            graph_viz = gh_viz.build_component_graph_viz(gremlin_viz, component_id)
+                    except Exception:
+                        pass
                     if graph_viz:
                         yield f"data: {json.dumps({'type': 'graph', 'data': graph_viz})}\n\n"
 
@@ -903,17 +1073,17 @@ async def chat_stream(req: Request) -> StreamingResponse:
                         "categories_tagged": categories,
                         "source_count": len(sources),
                         "category_count": len(categories),
-                        "graph_symptom_matched": symptom_id or "",
+                        "graph_component_matched": component_id or "",
                         "graph_context_provided": graph_active,
                     })
 
-                    # V3: Track graph node usage (fire-and-forget)
-                    if symptom_id:
+                    # Track graph node usage (fire-and-forget)
+                    if component_id:
                         try:
                             import graph_helper
                             gremlin = get_gremlin_client()
                             if gremlin:
-                                graph_helper.increment_hit_count(gremlin, [symptom_id])
+                                graph_helper.increment_hit_count(gremlin, [component_id])
                         except Exception:
                             pass
 
