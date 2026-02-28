@@ -594,15 +594,17 @@ def fill_empty_url_citations(text):
         full_name = f"{name} {timestamp}" if timestamp else name
         return f"({full_name})"
 
+    # en-dash (U+2013) must be a real char, not \u2013 in a raw string
+    dash = '\u2013'
     try:
         # Pattern 1: [[Name]() timestamp] — double-bracket wrapped citation
         text = re.sub(
-            r'\[\[([^\]]+)\]\(\)\s*(\d{1,2}:\d{2}(?:[\u2013\-]\d{1,2}:\d{2})?)?\]',
+            r'\[\[([^\]]+)\]\(\)\s*(\d{1,2}:\d{2}(?:[' + dash + r'\-]\d{1,2}:\d{2})?)?\]',
             fill_url, text
         )
         # Pattern 2: [Name]() timestamp — standalone empty-URL markdown link
         text = re.sub(
-            r'\[([^\]]+)\]\(\)\s*(\d{1,2}:\d{2}(?:[\u2013\-]\d{1,2}:\d{2})?)?',
+            r'\[([^\]]+)\]\(\)\s*(\d{1,2}:\d{2}(?:[' + dash + r'\-]\d{1,2}:\d{2})?)?',
             fill_url, text
         )
         return text
