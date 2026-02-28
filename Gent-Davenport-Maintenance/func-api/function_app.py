@@ -671,6 +671,10 @@ def fallback_link_citations(text, response):
             if name in category_tags or len(name) < 8:
                 return match.group(0)
 
+            # Skip comma-separated lists — they're descriptions, not document names
+            if name.count(',') >= 2:
+                return match.group(0)
+
             # If the name itself contains a URL, extract it and link directly
             # (prevents double-nesting when agent embeds URL in citation text)
             embedded_url = re.search(r'https?://[^\s)"\]]+', name)
@@ -686,20 +690,23 @@ def fallback_link_citations(text, response):
                 return safe_markdown_link(clean_name, url)
 
             name_lower = name.lower()
-            # First try: match against actual blob URLs from response
-            for key, (display, url) in url_lookup.items():
-                if key and (name_lower in key or key in name_lower):
-                    return safe_markdown_link(display, url)
-            # Second try: check if name matches a known video transcript
+            # First try: videos always go to YouTube (before url_lookup which has blob URLs)
             for video_name, yt_id in YOUTUBE_VIDEO_MAP.items():
                 if name_lower in video_name.lower() or video_name.lower() in name_lower:
                     yt_url = f"https://www.youtube.com/watch?v={yt_id}"
                     return safe_markdown_link(video_name, yt_url)
 
+            # Second try: match against actual blob URLs from response
+            for key, (display, url) in url_lookup.items():
+                if key and (name_lower in key or key in name_lower):
+                    return safe_markdown_link(display, url)
+
             # Third try: construct blob URL from known storage layout
             # Only for names that look like document citations (contain common doc words)
-            doc_indicators = ["manual", "instruction", "book", "part", "training",
-                              "tips", "troubleshooting", "operations", "pages"]
+            # Note: "part" removed — too many false positives on descriptive text
+            doc_indicators = ["manual", "instruction", "book", "training",
+                              "tips", "troubleshooting", "operations", "pages",
+                              "algorithm"]
             if any(ind in name_lower for ind in doc_indicators):
                 url = build_blob_url_fallback(name)
                 if url:
@@ -709,6 +716,11 @@ def fallback_link_citations(text, response):
         # Match (Name) that isn't part of a markdown link — negative lookbehind for ]
         # Allows one level of balanced inner parens so video names like "(part 1)" work
         result = re.sub(r'(?<!\])\(([^()]+(?:\([^()]*\)[^()]*)*)\)(?![\[(])', replace_unlinked, text)
+
+        # Insert space between adjacent markdown links so they don't run together
+        # e.g. [A](url1)[B](url2) → [A](url1) [B](url2)
+        result = re.sub(r'\)\[', ') [', result)
+
         return result
 
     except Exception as e:
