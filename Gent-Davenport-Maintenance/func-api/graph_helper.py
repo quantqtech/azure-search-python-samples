@@ -391,6 +391,218 @@ def build_component_graph_viz(client, component_id):
 
 
 # ---------------------------------------------------------------------------
+# Symptom traversal (Layer 2 — diagnostic context)
+# ---------------------------------------------------------------------------
+
+def query_all_symptoms(client):
+    """Return all symptom vertices — used for symptom classification matching."""
+    try:
+        raw = client.submit("g.V().has('type', 'symptom').valueMap(true)").all().result()
+    except Exception as e:
+        logger.warning(f"query_all_symptoms failed: {e}")
+        return []
+
+    return [
+        {
+            "id": _first(v.get("id")),
+            "name": _first(v.get("name", [""])),
+            "description": _first(v.get("description", [""])),
+            "aliases": _parse_json_list(v.get("aliases", ["[]"])),
+        }
+        for v in raw
+    ]
+
+
+def query_causes(client, symptom_id):
+    """Traverse symptom → causes (priority-ordered) → components + fixes.
+
+    Uses separate queries because Cosmos DB Gremlin doesn't support
+    complex coalesce/select in a single traversal.
+
+    Returns: [{cause_id, cause_desc, priority, category, component_id, component_name, fix_id, fix_desc}]
+    """
+    try:
+        raw = client.submit(
+            "g.V(symptom_id).outE('caused_by').order().by('priority')"
+            ".project('priority','cause_id')"
+            ".by('priority')"
+            ".by(inV().id())",
+            {"symptom_id": symptom_id},
+        ).all().result()
+    except Exception as e:
+        logger.warning(f"query_causes failed for {symptom_id}: {e}")
+        return []
+
+    if not raw:
+        return []
+
+    results = []
+    for row in raw:
+        cause_id = row.get("cause_id", "")
+        priority = row.get("priority", 99)
+
+        # Get cause vertex details
+        cause_data = {}
+        try:
+            cv = client.submit("g.V(cid).valueMap(true)", {"cid": cause_id}).all().result()
+            if cv:
+                cause_data = cv[0]
+        except Exception:
+            pass
+
+        # Get component via involves edge
+        comp_id, comp_name = "", ""
+        try:
+            comp_raw = client.submit("g.V(cid).out('involves').valueMap(true)", {"cid": cause_id}).all().result()
+            if comp_raw:
+                comp_id = _first(comp_raw[0].get("id", [""]))
+                comp_name = _first(comp_raw[0].get("name", [""]))
+        except Exception:
+            pass
+
+        # Get fix via fixed_by edge
+        fix_id, fix_desc = "", ""
+        try:
+            fix_raw = client.submit("g.V(cid).out('fixed_by').valueMap(true)", {"cid": cause_id}).all().result()
+            if fix_raw:
+                fix_id = _first(fix_raw[0].get("id", [""]))
+                fix_desc = _first(fix_raw[0].get("description", [""]))
+        except Exception:
+            pass
+
+        results.append({
+            "cause_id": cause_id,
+            "cause_desc": _first(cause_data.get("description", [""])),
+            "priority": priority,
+            "category": _first(cause_data.get("category", [""])),
+            "component_id": comp_id,
+            "component_name": comp_name,
+            "fix_id": fix_id,
+            "fix_desc": fix_desc,
+        })
+
+    return results
+
+
+def build_symptom_context(client, symptom_id):
+    """Build diagnostic checklist for a matched symptom (Layer 2).
+
+    Traverses symptom → causes (priority-ordered) → components + fixes.
+    Returns a formatted string for injection into the agent prompt.
+    """
+    causes = query_causes(client, symptom_id)
+    if not causes:
+        return ""
+
+    lines = [f'KNOWN CAUSES for symptom "{symptom_id}" (in diagnostic priority order):']
+    for i, c in enumerate(causes, 1):
+        category = f"[{c['category']}] " if c["category"] else ""
+        fix_text = f" — Fix: {c['fix_desc']}" if c["fix_desc"] else ""
+        comp_text = f" (component: {c['component_name']})" if c["component_name"] else ""
+        lines.append(f"  {i}. {category}{c['cause_desc']}{comp_text}{fix_text}")
+
+    lines.append("")
+    lines.append("Use this as a diagnostic checklist. Search for document evidence for each cause.")
+    lines.append("Include causes from this list even if search results don't mention them directly.")
+    return "\n".join(lines)
+
+
+def build_component_context(client, component_id):
+    """Build structural context for a matched component (Layer 2).
+
+    Traverses 1-2 hops from the component: parent system, siblings,
+    connected components. For non-diagnostic questions where knowing
+    the component's neighborhood helps the agent search better.
+
+    Returns a formatted string for injection into the agent prompt.
+    """
+    # Get component details
+    try:
+        comp_raw = client.submit("g.V(cid).valueMap(true)", {"cid": component_id}).all().result()
+    except Exception as e:
+        logger.warning(f"build_component_context failed for {component_id}: {e}")
+        return ""
+
+    if not comp_raw:
+        return ""
+
+    comp_name = _first(comp_raw[0].get("name", [component_id]))
+    comp_desc = _first(comp_raw[0].get("description", [""]))
+
+    lines = [f'COMPONENT CONTEXT for "{comp_name}":']
+    if comp_desc:
+        lines.append(f"  Description: {comp_desc}")
+
+    # Parent system
+    try:
+        sys_raw = client.submit("g.V(cid).in('contains').valueMap(true)", {"cid": component_id}).all().result()
+        if sys_raw:
+            sys_name = _first(sys_raw[0].get("name", [""]))
+            lines.append(f"  Part of system: {sys_name}")
+
+            # Sibling components in same system
+            sys_id = _first(sys_raw[0].get("id"))
+            sib_raw = client.submit(
+                "g.V(sys_id).out('contains').has('type','component').valueMap(true)",
+                {"sys_id": sys_id},
+            ).all().result()
+            siblings = [_first(s.get("name", [""])) for s in sib_raw
+                        if _first(s.get("id")) != component_id]
+            if siblings:
+                lines.append(f"  Sibling components: {', '.join(siblings[:8])}")
+    except Exception:
+        pass
+
+    # Connected components (outgoing)
+    connections = []
+    try:
+        out_raw = client.submit(
+            "g.V(cid).outE('connects_to','drives')"
+            ".project('label','to_name','desc')"
+            ".by(label).by(inV().values('name'))"
+            ".by(coalesce(values('description'), constant('')))",
+            {"cid": component_id},
+        ).all().result()
+        for r in out_raw:
+            verb = "drives" if r.get("label") == "drives" else "connects to"
+            desc = f" ({r['desc']})" if r.get("desc") else ""
+            connections.append(f"{comp_name} {verb} {r.get('to_name', '?')}{desc}")
+    except Exception:
+        pass
+
+    # Connected components (incoming)
+    try:
+        in_raw = client.submit(
+            "g.V(cid).inE('connects_to','drives')"
+            ".project('label','from_name','desc')"
+            ".by(label).by(outV().values('name'))"
+            ".by(coalesce(values('description'), constant('')))",
+            {"cid": component_id},
+        ).all().result()
+        for r in in_raw:
+            verb = "drives" if r.get("label") == "drives" else "connects to"
+            desc = f" ({r['desc']})" if r.get("desc") else ""
+            connections.append(f"{r.get('from_name', '?')} {verb} {comp_name}{desc}")
+    except Exception:
+        pass
+
+    if connections:
+        lines.append("  Connections:")
+        for c in connections:
+            lines.append(f"    - {c}")
+
+    lines.append("")
+    lines.append("Use this structural context to guide your search. "
+                  "Related components and connections often share maintenance procedures.")
+
+    # Only return if we have useful context beyond just the name
+    if len(lines) <= 3:
+        return ""
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Usage tracking (fire-and-forget after response)
 # ---------------------------------------------------------------------------
 
@@ -418,3 +630,15 @@ def _first(value):
     if isinstance(value, list) and value:
         return value[0]
     return value
+
+
+def _parse_json_list(value):
+    """Parse a JSON-encoded list stored as a string property (Cosmos DB limitation)."""
+    import json
+    raw = _first(value)
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return [raw] if raw else []
+    return raw if isinstance(raw, list) else []

@@ -21,7 +21,7 @@ from azure.ai.projects import AIProjectClient
 from azurefunctions.extensions.http.fastapi import Request, StreamingResponse, JSONResponse
 
 # Pipeline version — increment on each deploy to verify code is live
-PIPELINE_VERSION = "2026-02-28-v6"
+PIPELINE_VERSION = "2026-02-28-v7-layer2"
 
 # Storage config for video links
 STORAGE_ACCOUNT = "stj6lw7vswhnnhw"
@@ -67,6 +67,7 @@ _table_client = None
 _blob_service_client = None
 _gremlin_client = None     # V3 Graph RAG — Cosmos DB Gremlin
 _component_cache = None    # V3 Graph RAG — cached component list for classification
+_symptom_cache = None      # V3 Graph RAG — cached symptom list for classification
 _direct_openai_client = None  # Direct AOAI client for classification (bypasses Foundry project routing)
 _world_model_cache = None     # V3 Layer 1 — cached machine structural summary
 
@@ -173,83 +174,121 @@ def get_world_model():
     return _world_model_cache
 
 
-def classify_component(message):
-    """Identify which machine component the question relates to.
+def classify_question(message):
+    """Classify user question into symptom + component in a single LLM call (Layer 2).
 
-    The graph is a world model — it shows machine structure, not diagnostics.
-    This classifier maps natural language to the nearest component so we can
-    show it in context within the graph sidebar.
+    Returns (symptom_id, component_id) — either can be None.
+    - symptom_id: matched when the question describes a problem/defect → diagnostic context
+    - component_id: matched when the question mentions a specific part → structural context + sidebar
 
-    Returns component ID string, or None if no component identified.
+    One LLM call handles both classifications to minimize latency (~200-500ms total).
     """
-    global _component_cache
+    global _component_cache, _symptom_cache
 
     gremlin = get_gremlin_client()
     if not gremlin:
-        return None
+        return None, None
 
     import graph_helper
 
-    # Load component list once (refreshed on function app restart)
+    # Load caches once (refreshed on function app restart)
     if _component_cache is None:
         _component_cache = graph_helper.query_all_components(gremlin)
         logging.info(f"Loaded {len(_component_cache)} components for classification")
 
-    if not _component_cache:
-        return None
+    if _symptom_cache is None:
+        _symptom_cache = graph_helper.query_all_symptoms(gremlin)
+        logging.info(f"Loaded {len(_symptom_cache)} symptoms for classification")
 
-    # Include descriptions so the LLM can fuzzy-match questions about related parts
+    if not _component_cache:
+        return None, None
+
     component_list = "\n".join(
         f"- {c['id']}: {c['name']} — {c['description']}"
         for c in _component_cache
     )
+
+    symptom_list = "\n".join(
+        f"- {s['id']}: {s['name']}"
+        + (f" (aliases: {', '.join(s['aliases'])})" if s.get('aliases') else "")
+        for s in _symptom_cache
+    ) if _symptom_cache else "(no symptoms in graph)"
 
     try:
         resp = get_direct_openai_client().chat.completions.create(
             model="gpt-5-mini",
             messages=[
                 {"role": "system", "content": (
-                    "You identify which component of a Davenport Model B screw machine "
-                    "the user is asking about. Match to the most relevant component from "
-                    "the list below. The goal is to show the user where this part sits "
-                    "in the machine's structure.\n\n"
+                    "You classify Davenport Model B screw machine questions into two categories:\n\n"
+                    "1. SYMPTOM: Is the user describing a problem, defect, or malfunction? "
+                    "Match to the closest symptom from the symptom list.\n"
+                    "2. COMPONENT: Which machine component is the question about? "
+                    "Match to the closest component from the component list.\n\n"
+                    f"Known symptoms:\n{symptom_list}\n\n"
                     f"Known components:\n{component_list}\n\n"
-                    "Common aliases: 'stock reel' and 'reel tension' relate to bar_stock "
-                    "(the reel feeds bar stock). 'Cam rolls' relate to tooling. "
-                    "'T blade' is the cutoff_tool.\n\n"
-                    "If the question mentions a part or mechanism related to any component, "
-                    "pick the closest match. Only return null if the question is purely "
-                    "general (e.g., 'what maintenance should I do weekly').\n\n"
-                    'Return JSON: {"id": "the_component_id"} or {"id": null}.'
+                    "Common aliases: 'stock reel' and 'reel tension' relate to bar_stock. "
+                    "'Cam rolls' relate to tooling. 'T blade' is the cutoff_tool. "
+                    "'Part is short' and 'short part' mean part_short.\n\n"
+                    "Rules:\n"
+                    "- Set symptom_id when the user describes something WRONG (a problem to diagnose)\n"
+                    "- Set component_id when the user mentions a specific part or mechanism\n"
+                    "- Both can be non-null (e.g., 'part is short when cutting off' → symptom=part_short, component=cutoff_tool)\n"
+                    "- Set null when there's no clear match\n\n"
+                    'Return JSON: {"symptom_id": "xxx" or null, "component_id": "yyy" or null}'
                 )},
                 {"role": "user", "content": message},
             ],
             response_format={"type": "json_object"},
         )
         result = json.loads(resp.choices[0].message.content)
-        comp_id = result.get("id")
+        symptom_id = result.get("symptom_id")
+        comp_id = result.get("component_id")
 
+        if symptom_id:
+            name = next((s["name"] for s in _symptom_cache if s["id"] == symptom_id), symptom_id)
+            logging.info(f"Symptom classified: {symptom_id} ({name})")
         if comp_id:
             name = next((c["name"] for c in _component_cache if c["id"] == comp_id), comp_id)
             logging.info(f"Component classified: {comp_id} ({name})")
-            return comp_id
+
+        return symptom_id, comp_id
 
     except Exception as e:
-        logging.warning(f"classify_component failed: {e}")
+        logging.warning(f"classify_question failed: {e}")
 
-    return None
+    return None, None
 
 
 def get_graph_context_for_message(message):
-    """Graph RAG: identify the relevant component for the world model graph.
+    """Graph RAG Layer 2: classify question and build focused context.
 
     Returns (context_string, component_id).
-    Graph = world model (machine structure), docs = diagnostics (via RAG).
+    - Diagnostic questions (symptom matched) → cause→fix checklist from graph
+    - Component questions (no symptom) → structural context (connections, parent system)
+    - component_id drives the sidebar visualization regardless of context type
     """
     try:
-        comp_id = classify_component(message)
+        import graph_helper
+        gremlin = get_gremlin_client()
+        if not gremlin:
+            return "", None
+
+        symptom_id, comp_id = classify_question(message)
+
+        # Diagnostic context: symptom → prioritized cause→fix chain
+        if symptom_id:
+            context = graph_helper.build_symptom_context(gremlin, symptom_id)
+            if context:
+                logging.info(f"Layer 2 diagnostic context: {len(context)} chars for symptom {symptom_id}")
+                return context, comp_id
+
+        # Structural context: component → connections, parent system, siblings
         if comp_id:
-            return "", comp_id
+            context = graph_helper.build_component_context(gremlin, comp_id)
+            if context:
+                logging.info(f"Layer 2 structural context: {len(context)} chars for component {comp_id}")
+                return context, comp_id
+            return "", comp_id  # still return comp_id for sidebar even if no context
 
     except Exception as e:
         logging.warning(f"Graph context failed (proceeding without): {e}")
@@ -974,7 +1013,7 @@ async def chat(req: Request) -> JSONResponse:
         t_graph = time.time()
         # Layer 1: Always-present machine world model (cached)
         world_model = get_world_model()
-        # Layer 2: Classify question → component match (for graph sidebar)
+        # Layer 2: Classify question → symptom (diagnostic) or component (structural) context
         component_context, component_id = get_graph_context_for_message(message)
         # Assemble agent input with available context
         parts = []
@@ -1001,6 +1040,7 @@ async def chat(req: Request) -> JSONResponse:
         trace["timings"] = timings
         trace["graph_component"] = component_id or ""
         trace["graph_context_used"] = graph_active
+        trace["graph_layer2_chars"] = len(component_context) if component_context else 0
         trace["pipeline_version"] = PIPELINE_VERSION
 
         # Citation pipeline: markers → strip search URLs → fill empty links → inline URLs → embedded URLs → fallback (Name) → YouTube
@@ -1116,7 +1156,7 @@ async def chat_stream(req: Request) -> StreamingResponse:
     # V3 Graph RAG: two-layer context (before streaming starts)
     # Layer 1: Always-present machine world model (cached)
     world_model = get_world_model()
-    # Layer 2: Classify question → component match (for graph sidebar)
+    # Layer 2: Classify question → symptom (diagnostic) or component (structural) context
     component_context, component_id = get_graph_context_for_message(message)
     # Assemble agent input with available context
     parts = []
@@ -1174,6 +1214,7 @@ async def chat_stream(req: Request) -> StreamingResponse:
                     trace["timings"] = {"total": elapsed_ms}
                     trace["graph_component"] = component_id or ""
                     trace["graph_context_used"] = graph_active
+                    trace["graph_layer2_chars"] = len(component_context) if component_context else 0
                     trace["pipeline_version"] = PIPELINE_VERSION
                     # Extract sources before yielding so trace includes the count
                     sources = extract_sources_cited(full_text)
