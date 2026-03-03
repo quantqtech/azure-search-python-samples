@@ -405,6 +405,49 @@ def log_to_lake(folder, record):
         logging.warning(f"log_to_lake({folder}) failed: {e}")
 
 
+def log_graph_traversal(conversation_id, turn_id, turn_number, timestamp, traversal_log):
+    """Write flat JSONL files for graph traversal analysis (developer use).
+
+    Splits the traversal into two tables:
+      graph-nodes — one row per node (id, name, type, hop, is_starting_node)
+      graph-edges — one row per edge (from_id, to_id, label)
+
+    Both include conversation_id + turn_id for joining to conversations table in Power BI.
+    Fire-and-forget — failures never break the chat response.
+    """
+    try:
+        starting_set = set(traversal_log.get("starting_ids", []))
+
+        # One row per node in the traversal
+        for node in traversal_log.get("nodes_summary", []):
+            log_to_lake("graph-nodes", {
+                "timestamp": timestamp,
+                "conversation_id": conversation_id,
+                "turn_id": turn_id,
+                "turn_number": turn_number,
+                "node_id": node.get("id", ""),
+                "node_name": node.get("name", ""),
+                "node_type": node.get("type", ""),
+                "hop": node.get("hop", -1),
+                "is_starting_node": node.get("id", "") in starting_set,
+            })
+
+        # One row per edge in the traversal
+        for edge in traversal_log.get("edges_summary", []):
+            log_to_lake("graph-edges", {
+                "timestamp": timestamp,
+                "conversation_id": conversation_id,
+                "turn_id": turn_id,
+                "turn_number": turn_number,
+                "from_id": edge.get("from", ""),
+                "to_id": edge.get("to", ""),
+                "label": edge.get("label", ""),
+            })
+
+    except Exception as e:
+        logging.warning(f"log_graph_traversal failed: {e}")
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # CITATION PIPELINE
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1198,9 +1241,16 @@ async def chat(req: Request) -> JSONResponse:
             "source_count": len(sources),
             "category_count": len(categories),
             "graph_starting_ids": graph_ids or [],
+            "graph_starting_names": traversal_log["starting_names"] if traversal_log else [],
             "graph_context_provided": graph_active,
-            "graph_traversal": traversal_log,
+            "graph_node_count": traversal_log["node_count"] if traversal_log else 0,
+            "graph_edge_count": traversal_log["edge_count"] if traversal_log else 0,
         })
+
+        # Log graph traversal details to separate flat files (developer analysis)
+        if traversal_log:
+            log_graph_traversal(conversation_id, turn_id, turn_number,
+                                datetime.now(timezone.utc).isoformat(), traversal_log)
 
         # Track graph node usage (fire-and-forget)
         if graph_ids:
@@ -1368,9 +1418,16 @@ async def chat_stream(req: Request) -> StreamingResponse:
                         "source_count": len(sources),
                         "category_count": len(categories),
                         "graph_starting_ids": graph_ids or [],
+                        "graph_starting_names": traversal_log["starting_names"] if traversal_log else [],
                         "graph_context_provided": graph_active,
-                        "graph_traversal": traversal_log,
+                        "graph_node_count": traversal_log["node_count"] if traversal_log else 0,
+                        "graph_edge_count": traversal_log["edge_count"] if traversal_log else 0,
                     })
+
+                    # Log graph traversal details to separate flat files (developer analysis)
+                    if traversal_log:
+                        log_graph_traversal(conversation_id, turn_id, turn_number,
+                                            datetime.now(timezone.utc).isoformat(), traversal_log)
 
                     # Track graph node usage (fire-and-forget)
                     if graph_ids:
