@@ -21,7 +21,7 @@ from azure.ai.projects import AIProjectClient
 from azurefunctions.extensions.http.fastapi import Request, StreamingResponse, JSONResponse
 
 # Pipeline version — increment on each deploy to verify code is live
-PIPELINE_VERSION = "2026-02-28-v8-fix-fake-links"
+PIPELINE_VERSION = "2026-03-01-v11-context-logging"
 
 # Storage config for video links
 STORAGE_ACCOUNT = "stj6lw7vswhnnhw"
@@ -66,8 +66,7 @@ _openai_client = None
 _table_client = None
 _blob_service_client = None
 _gremlin_client = None     # V3 Graph RAG — Cosmos DB Gremlin
-_component_cache = None    # V3 Graph RAG — cached component list for classification
-_symptom_cache = None      # V3 Graph RAG — cached symptom list for classification
+_vertex_cache = None       # V3 Graph RAG — cached vertex list for classification (all types)
 _direct_openai_client = None  # Direct AOAI client for classification (bypasses Foundry project routing)
 _world_model_cache = None     # V3 Layer 1 — cached machine structural summary
 
@@ -174,126 +173,197 @@ def get_world_model():
     return _world_model_cache
 
 
-def classify_question(message):
-    """Classify user question into symptom + component in a single LLM call (Layer 2).
+def classify_graph_nodes(message, recent_messages=None):
+    """Find the 1-3 graph vertices most relevant to the user's question.
 
-    Returns (symptom_id, component_id) — either can be None.
-    - symptom_id: matched when the question describes a problem/defect → diagnostic context
-    - component_id: matched when the question mentions a specific part → structural context + sidebar
+    recent_messages: list of prior user messages (last 2-3) for follow-up context.
+    Helps the classifier connect "what about the collet?" to "part is short".
 
-    One LLM call handles both classifications to minimize latency (~200-500ms total).
+    Returns a list of vertex IDs (any type: symptom, component, system).
+    The graph traversal walks outward from these starting points — the graph
+    structure determines what context gets built, not routing categories.
     """
-    global _component_cache, _symptom_cache
+    global _vertex_cache
 
     gremlin = get_gremlin_client()
     if not gremlin:
-        return None, None
+        return []
 
     import graph_helper
 
-    # Load caches once (refreshed on function app restart)
-    if _component_cache is None:
-        _component_cache = graph_helper.query_all_components(gremlin)
-        logging.info(f"Loaded {len(_component_cache)} components for classification")
+    # Load all classifiable vertices once (refreshed on function app restart)
+    if _vertex_cache is None:
+        _vertex_cache = graph_helper.query_all_vertices_for_classifier(gremlin)
+        logging.info(f"Loaded {len(_vertex_cache)} vertices for classification "
+                     f"({sum(1 for v in _vertex_cache if v['type'] == 'symptom')} symptoms, "
+                     f"{sum(1 for v in _vertex_cache if v['type'] == 'component')} components, "
+                     f"{sum(1 for v in _vertex_cache if v['type'] == 'system')} systems)")
 
-    if _symptom_cache is None:
-        _symptom_cache = graph_helper.query_all_symptoms(gremlin)
-        logging.info(f"Loaded {len(_symptom_cache)} symptoms for classification")
+    if not _vertex_cache:
+        return []
 
-    if not _component_cache:
-        return None, None
+    # Build vertex list for the LLM — grouped by type for clarity
+    vertex_lines = []
+    for vtype in ["symptom", "component", "system"]:
+        typed = [v for v in _vertex_cache if v["type"] == vtype]
+        if typed:
+            vertex_lines.append(f"\n{vtype.upper()}S:")
+            for v in typed:
+                line = f"- {v['id']}: {v['name']}"
+                if v.get("description"):
+                    line += f" — {v['description']}"
+                if v.get("aliases"):
+                    line += f" (aliases: {', '.join(v['aliases'])})"
+                vertex_lines.append(line)
 
-    component_list = "\n".join(
-        f"- {c['id']}: {c['name']} — {c['description']}"
-        for c in _component_cache
-    )
+    vertex_text = "\n".join(vertex_lines)
 
-    symptom_list = "\n".join(
-        f"- {s['id']}: {s['name']}"
-        + (f" (aliases: {', '.join(s['aliases'])})" if s.get('aliases') else "")
-        for s in _symptom_cache
-    ) if _symptom_cache else "(no symptoms in graph)"
+    # Build conversation context for follow-up questions
+    conversation_block = ""
+    if recent_messages:
+        prior = "\n".join(f"- {msg}" for msg in recent_messages[-3:])
+        conversation_block = (
+            f"\n\nCONVERSATION CONTEXT (recent user messages, oldest first):\n{prior}\n"
+            f"Use this to resolve follow-up references like 'that', 'it', 'what about...'.\n"
+        )
 
     try:
         resp = get_direct_openai_client().chat.completions.create(
             model="gpt-5-mini",
             messages=[
                 {"role": "system", "content": (
-                    "You classify Davenport Model B screw machine questions into two categories:\n\n"
-                    "1. SYMPTOM: Is the user describing a problem, defect, or malfunction? "
-                    "Match to the closest symptom from the symptom list.\n"
-                    "2. COMPONENT: Which machine component is the question about? "
-                    "Match to the closest component from the component list.\n\n"
-                    f"Known symptoms:\n{symptom_list}\n\n"
-                    f"Known components:\n{component_list}\n\n"
-                    "Common aliases: 'stock reel' and 'reel tension' relate to bar_stock. "
-                    "'Cam rolls' relate to tooling. 'T blade' is the cutoff_tool. "
-                    "'Part is short' and 'short part' mean part_short.\n\n"
+                    "You identify which graph vertices are most relevant to a Davenport Model B "
+                    "screw machine question. The graph contains symptoms (problems), components "
+                    "(machine parts), and systems (groups of components).\n\n"
+                    f"Available vertices:{vertex_text}\n\n"
+                    "Common aliases: 'stock reel'/'reel tension' → bar_stock, "
+                    "'cam rolls' → tooling, 'T blade' → cutoff_tool, "
+                    "'part is short'/'short part' → part_short, "
+                    "'setup'/'changeover' → relates to multiple systems.\n\n"
+                    f"{conversation_block}"
                     "Rules:\n"
-                    "- Set symptom_id when the user describes something WRONG (a problem to diagnose)\n"
-                    "- Set component_id when the user mentions a specific part or mechanism\n"
-                    "- Both can be non-null (e.g., 'part is short when cutting off' → symptom=part_short, component=cutoff_tool)\n"
-                    "- Set null when there's no clear match\n\n"
-                    'Return JSON: {"symptom_id": "xxx" or null, "component_id": "yyy" or null}'
+                    "- Return 1-3 vertex IDs that best match the question\n"
+                    "- Prefer symptoms when the user describes something WRONG\n"
+                    "- Prefer components when the user asks about a specific part\n"
+                    "- Prefer systems for broad/general questions\n"
+                    "- Multiple IDs are fine (e.g., 'part short when cutting' → [\"part_short\", \"cutoff_tool\"])\n"
+                    "- Return [] only if the question is completely unrelated to the machine\n\n"
+                    'Return JSON: {"vertex_ids": ["id1", "id2"]}'
                 )},
-                {"role": "user", "content": message},
+                {"role": "user", "content": f"CURRENT QUESTION: {message}"},
             ],
             response_format={"type": "json_object"},
         )
         result = json.loads(resp.choices[0].message.content)
-        symptom_id = result.get("symptom_id")
-        comp_id = result.get("component_id")
+        vertex_ids = result.get("vertex_ids", [])
 
-        if symptom_id:
-            name = next((s["name"] for s in _symptom_cache if s["id"] == symptom_id), symptom_id)
-            logging.info(f"Symptom classified: {symptom_id} ({name})")
-        if comp_id:
-            name = next((c["name"] for c in _component_cache if c["id"] == comp_id), comp_id)
-            logging.info(f"Component classified: {comp_id} ({name})")
+        # Validate — only return IDs that actually exist in the graph
+        valid_ids = {v["id"] for v in _vertex_cache}
+        vertex_ids = [vid for vid in vertex_ids if vid in valid_ids]
 
-        return symptom_id, comp_id
+        if vertex_ids:
+            names = [next((v["name"] for v in _vertex_cache if v["id"] == vid), vid) for vid in vertex_ids]
+            logging.info(f"Graph nodes classified: {vertex_ids} ({names})")
+
+        return vertex_ids
 
     except Exception as e:
-        logging.warning(f"classify_question failed: {e}")
+        logging.warning(f"classify_graph_nodes failed: {e}")
 
-    return None, None
+    return []
 
 
-def get_graph_context_for_message(message):
-    """Graph RAG Layer 2: classify question and build focused context.
+def build_graph_log_summary(nodes, edges, starting_ids):
+    """Build a compact traversal summary for analytics logging (Level 2 only).
 
-    Returns (context_string, component_id).
-    - Diagnostic questions (symptom matched) → cause→fix checklist from graph
-    - Component questions (no symptom) → structural context (connections, parent system)
-    - component_id drives the sidebar visualization regardless of context type
+    Captures enough detail to analyze classification quality, hop depth,
+    and type distribution without storing full descriptions (~2-4 KB).
+    """
+    try:
+        # Type breakdown
+        type_counts = {}
+        for n in nodes.values():
+            t = n.get("type", "unknown")
+            type_counts[t] = type_counts.get(t, 0) + 1
+
+        # Starting node names for readability
+        starting_names = [
+            nodes[sid].get("name", sid) for sid in starting_ids if sid in nodes
+        ]
+
+        # Compact node list — id, name, type, hop (no descriptions)
+        nodes_summary = [
+            {"id": n["id"], "name": n.get("name", ""), "type": n.get("type", ""), "hop": n.get("hop", -1)}
+            for n in sorted(nodes.values(), key=lambda x: (x.get("hop", 99), x.get("type", "")))
+        ]
+
+        # Compact edge list — from, to, label
+        edges_summary = [
+            {"from": e.get("from_id", ""), "to": e.get("to_id", ""), "label": e.get("label", "")}
+            for e in edges
+        ]
+
+        return {
+            "starting_ids": starting_ids,
+            "starting_names": starting_names,
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+            "node_types": type_counts,
+            "nodes_summary": nodes_summary,
+            "edges_summary": edges_summary,
+        }
+    except Exception as e:
+        logging.warning(f"build_graph_log_summary failed: {e}")
+        return None
+
+
+def get_graph_context_for_message(message, recent_messages=None):
+    """Graph RAG Layer 2: one traversal → agent context + sidebar viz.
+
+    1. Classifier picks 1-3 starting vertices (any type)
+    2. Generic traversal walks 1-2 hops outward
+    3. Same data feeds BOTH agent context text AND sidebar visualization
+
+    Returns (context_string, graph_viz_dict, starting_ids, traversal_log).
     """
     try:
         import graph_helper
         gremlin = get_gremlin_client()
         if not gremlin:
-            return "", None
+            return "", None, [], None
 
-        symptom_id, comp_id = classify_question(message)
+        # Step 1: find starting nodes
+        vertex_ids = classify_graph_nodes(message, recent_messages=recent_messages)
+        if not vertex_ids:
+            return "", None, [], None
 
-        # Diagnostic context: symptom → prioritized cause→fix chain
-        if symptom_id:
-            context = graph_helper.build_symptom_context(gremlin, symptom_id)
-            if context:
-                logging.info(f"Layer 2 diagnostic context: {len(context)} chars for symptom {symptom_id}")
-                return context, comp_id
+        # Step 2: traverse outward — one generic traversal for any vertex type
+        nodes, edges = graph_helper.traverse_neighborhood(gremlin, vertex_ids, max_hops=2)
+        if not nodes:
+            return "", None, vertex_ids, None
 
-        # Structural context: component → connections, parent system, siblings
-        if comp_id:
-            context = graph_helper.build_component_context(gremlin, comp_id)
-            if context:
-                logging.info(f"Layer 2 structural context: {len(context)} chars for component {comp_id}")
-                return context, comp_id
-            return "", comp_id  # still return comp_id for sidebar even if no context
+        # Step 3: build both outputs from the same traversal data
+        context = graph_helper.build_graph_context(nodes, edges, vertex_ids)
+        viz = graph_helper.build_graph_viz(nodes, edges, vertex_ids)
+
+        # Step 4: build traversal log for analytics (Level 2 only)
+        traversal_log = build_graph_log_summary(nodes, edges, vertex_ids)
+
+        logging.info(f"Layer 2: {len(vertex_ids)} starting nodes → {len(nodes)} total nodes, "
+                     f"{len(edges)} edges, {len(context)} chars context")
+
+        # Track usage on starting nodes (fire-and-forget)
+        try:
+            graph_helper.increment_hit_count(gremlin, vertex_ids)
+        except Exception:
+            pass
+
+        return context, viz, vertex_ids, traversal_log
 
     except Exception as e:
         logging.warning(f"Graph context failed (proceeding without): {e}")
 
-    return "", None
+    return "", None, [], None
 
 
 def log_to_lake(folder, record):
@@ -350,6 +420,7 @@ def log_to_lake(folder, record):
 #   Format F: (Name (url))               — URL embedded inside name parens
 #   Format G: [Name]                     — single-bracket, no URL
 #   Format H: [[Name]]                   — double-bracket, no URL
+#   Format I: (Name](url)                — broken hybrid: ( instead of [ at start
 #
 # IMPORTANT: Video transcript names like "Davenport Machine Model B - Preventive
 # Maintenance" reference .md files in blob storage that have NO value as links.
@@ -360,8 +431,9 @@ def log_to_lake(folder, record):
 # Pipeline order matters — each step handles one format and normalizes for the
 # next. Adding/reordering steps can break the chain.
 #
-# Pipeline (10 steps, both streaming and non-streaming):
+# Pipeline (11 steps, both streaming and non-streaming):
 #   1. process_citations         — Format A: (Name)【marker】 → [Name](url) or (Name)
+#   1b. fix_broken_markdown_links — Format I: (Name](url) → [Name](url)
 #   2. clean_search_service_urls — strips .search.windows.net URLs (not real blob URLs)
 #   3. fill_empty_url_citations  — Format C/D: [Name]() → YouTube or (Name) for fallback
 #   3b. fix_fake_markdown_links  — [Category](DocName) → [Category] (DocName)
@@ -570,6 +642,27 @@ def process_citations(response, text):
     except Exception as e:
         logging.warning(f"process_citations failed: {e}")
         return re.sub(r'【[^】]*】', '', text)
+
+
+def fix_broken_markdown_links(text):
+    """Fix (Name](url) → [Name](url) — agent sometimes writes ( instead of [.
+
+    The agent occasionally outputs a hybrid citation format: opening paren instead
+    of opening bracket, but correct ](url) closing. This creates a malformed
+    markdown link that no browser or renderer can parse.
+
+    Must run EARLY — before other steps try to parse (Name) patterns.
+    """
+    try:
+        # Match (text](https://url) — opening ( instead of [, with valid URL
+        return re.sub(
+            r'\(([^)\]]+)\]\((https?://[^)]+)\)',
+            r'[\1](\2)',
+            text,
+        )
+    except Exception as e:
+        logging.warning(f"fix_broken_markdown_links failed: {e}")
+        return text
 
 
 def convert_inline_url_citations(text):
@@ -1031,19 +1124,21 @@ async def chat(req: Request) -> JSONResponse:
 
         # V3 Graph RAG: two-layer context
         t_graph = time.time()
-        # Layer 1: Always-present machine world model (cached)
-        world_model = get_world_model()
-        # Layer 2: Classify question → symptom (diagnostic) or component (structural) context
-        component_context, component_id = get_graph_context_for_message(message)
+        turn_number = req_body.get("turn_number", 1)
+        recent_messages = req_body.get("recent_messages", [])
+        # Layer 1: World model — only on turn 1 (Foundry conversation retains it for later turns)
+        world_model = get_world_model() if turn_number <= 1 else ""
+        # Layer 2: Generic traversal → agent context + sidebar viz (one call, both outputs)
+        graph_context, graph_viz, graph_ids, traversal_log = get_graph_context_for_message(message, recent_messages=recent_messages)
         # Assemble agent input with available context
         parts = []
         if world_model:
             parts.append(world_model)
-        if component_context:
-            parts.append(component_context)
+        if graph_context:
+            parts.append(graph_context)
         parts.append(f"USER QUESTION:\n{message}")
         agent_input = "\n\n".join(parts)
-        graph_active = bool(world_model or component_context)
+        graph_active = bool(world_model or graph_context)
         timings["graph_context"] = round((time.time() - t_graph) * 1000)
 
         t2 = time.time()
@@ -1058,13 +1153,14 @@ async def chat(req: Request) -> JSONResponse:
 
         trace = extract_reasoning_trace(response)
         trace["timings"] = timings
-        trace["graph_component"] = component_id or ""
+        trace["graph_starting_ids"] = graph_ids or []
         trace["graph_context_used"] = graph_active
-        trace["graph_layer2_chars"] = len(component_context) if component_context else 0
+        trace["graph_layer2_chars"] = len(graph_context) if graph_context else 0
         trace["pipeline_version"] = PIPELINE_VERSION
 
-        # Citation pipeline: markers → strip search URLs → fill empty links → inline URLs → embedded URLs → fallback (Name) → YouTube
+        # Citation pipeline: markers → fix broken → strip search URLs → fill empty → inline → embedded → fallback (Name) → YouTube
         response_text = process_citations(response, response.output_text)
+        response_text = fix_broken_markdown_links(response_text)
         response_text = clean_search_service_urls(response_text)
         response_text = fill_empty_url_citations(response_text)
         response_text = fix_fake_markdown_links(response_text)
@@ -1101,20 +1197,20 @@ async def chat(req: Request) -> JSONResponse:
             "categories_tagged": categories,
             "source_count": len(sources),
             "category_count": len(categories),
-            "graph_component_matched": component_id or "",
+            "graph_starting_ids": graph_ids or [],
             "graph_context_provided": graph_active,
+            "graph_traversal": traversal_log,
         })
 
-        # Build graph visualization — component in the world model
-        graph_viz = None
-        try:
-            import graph_helper
-            gremlin = get_gremlin_client()
-            if gremlin and component_id:
-                graph_viz = graph_helper.build_component_graph_viz(gremlin, component_id)
-                graph_helper.increment_hit_count(gremlin, [component_id])
-        except Exception:
-            pass
+        # Track graph node usage (fire-and-forget)
+        if graph_ids:
+            try:
+                import graph_helper as gh_track
+                gremlin_track = get_gremlin_client()
+                if gremlin_track:
+                    gh_track.increment_hit_count(gremlin_track, graph_ids)
+            except Exception as e:
+                logging.warning(f"Graph hit tracking failed: {e}")
 
         result = {
             "response": response_text,
@@ -1175,19 +1271,20 @@ async def chat_stream(req: Request) -> StreamingResponse:
         conversation_id = conversation.id
 
     # V3 Graph RAG: two-layer context (before streaming starts)
-    # Layer 1: Always-present machine world model (cached)
-    world_model = get_world_model()
-    # Layer 2: Classify question → symptom (diagnostic) or component (structural) context
-    component_context, component_id = get_graph_context_for_message(message)
+    recent_messages = body.get("recent_messages", [])
+    # Layer 1: World model — only on turn 1 (Foundry conversation retains it for later turns)
+    world_model = get_world_model() if turn_number <= 1 else ""
+    # Layer 2: Generic traversal → agent context + sidebar viz (one call, both outputs)
+    graph_context, graph_viz, graph_ids, traversal_log = get_graph_context_for_message(message, recent_messages=recent_messages)
     # Assemble agent input with available context
     parts = []
     if world_model:
         parts.append(world_model)
-    if component_context:
-        parts.append(component_context)
+    if graph_context:
+        parts.append(graph_context)
     parts.append(f"USER QUESTION:\n{message}")
     agent_input = "\n\n".join(parts)
-    graph_active = bool(world_model or component_context)
+    graph_active = bool(world_model or graph_context)
 
     async def event_generator():
         # Send conversation_id immediately so the frontend can persist it
@@ -1220,8 +1317,9 @@ async def chat_stream(req: Request) -> StreamingResponse:
                     # Signals end of stream — use accumulated deltas or pull full text
                     if not full_text:
                         full_text = getattr(event.response, "output_text", "")
-                    # Citation pipeline: markers → strip search URLs → fill empty links → inline URLs → embedded URLs → fallback (Name) → YouTube
+                    # Citation pipeline: markers → fix broken → strip search URLs → fill empty → inline → embedded → fallback (Name) → YouTube
                     full_text = process_citations(event.response, full_text)
+                    full_text = fix_broken_markdown_links(full_text)
                     full_text = clean_search_service_urls(full_text)
                     full_text = fill_empty_url_citations(full_text)
                     full_text = fix_fake_markdown_links(full_text)
@@ -1234,9 +1332,9 @@ async def chat_stream(req: Request) -> StreamingResponse:
                     elapsed_ms = round((time.time() - t_start) * 1000)
                     trace = extract_reasoning_trace(event.response)
                     trace["timings"] = {"total": elapsed_ms}
-                    trace["graph_component"] = component_id or ""
+                    trace["graph_starting_ids"] = graph_ids or []
                     trace["graph_context_used"] = graph_active
-                    trace["graph_layer2_chars"] = len(component_context) if component_context else 0
+                    trace["graph_layer2_chars"] = len(graph_context) if graph_context else 0
                     trace["pipeline_version"] = PIPELINE_VERSION
                     # Extract sources before yielding so trace includes the count
                     sources = extract_sources_cited(full_text)
@@ -1244,15 +1342,7 @@ async def chat_stream(req: Request) -> StreamingResponse:
                     trace["sources_found"] = len(sources)
                     turn_id = generate_turn_id()
 
-                    # Build component graph viz — send before done event
-                    graph_viz = None
-                    try:
-                        import graph_helper as gh_viz
-                        gremlin_viz = get_gremlin_client()
-                        if gremlin_viz and component_id:
-                            graph_viz = gh_viz.build_component_graph_viz(gremlin_viz, component_id)
-                    except Exception:
-                        pass
+                    # Send graph viz as SSE event (already computed before streaming started)
                     if graph_viz:
                         yield f"data: {json.dumps({'type': 'graph', 'data': graph_viz})}\n\n"
 
@@ -1277,19 +1367,20 @@ async def chat_stream(req: Request) -> StreamingResponse:
                         "categories_tagged": categories,
                         "source_count": len(sources),
                         "category_count": len(categories),
-                        "graph_component_matched": component_id or "",
+                        "graph_starting_ids": graph_ids or [],
                         "graph_context_provided": graph_active,
+                        "graph_traversal": traversal_log,
                     })
 
                     # Track graph node usage (fire-and-forget)
-                    if component_id:
+                    if graph_ids:
                         try:
-                            import graph_helper
-                            gremlin = get_gremlin_client()
-                            if gremlin:
-                                graph_helper.increment_hit_count(gremlin, [component_id])
-                        except Exception:
-                            pass
+                            import graph_helper as gh_track
+                            gremlin_track = get_gremlin_client()
+                            if gremlin_track:
+                                gh_track.increment_hit_count(gremlin_track, graph_ids)
+                        except Exception as e:
+                            logging.warning(f"Graph hit tracking failed: {e}")
 
             # Safety: if stream ended without a completed event, send what we have
             if full_text and not completed:

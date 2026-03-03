@@ -387,7 +387,10 @@
             flex-shrink: 0;
         }
         .graph-legend-item { display: flex; align-items: center; gap: 0.3rem; }
-        .graph-legend-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+        .graph-legend-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; box-sizing: border-box; }
+        .graph-legend-box { width: 14px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+        .graph-legend-diamond { width: 10px; height: 10px; transform: rotate(45deg); flex-shrink: 0; }
+        .graph-legend-square { width: 11px; height: 11px; border-radius: 2px; flex-shrink: 0; }
         .graph-detail {
             margin-top: 0.75rem;
             padding: 0.75rem;
@@ -1127,10 +1130,12 @@
 
             try {
                 // Try streaming first; fall back to regular /chat if not available
+                // Last 3 user messages for classifier context on follow-up questions
+                const recentMessages = messageHistory.slice(-3).map(m => m.message);
                 const streamResp = await fetch(`${API_BASE}/chat/stream`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message, conversation_id: conversationId, reasoning_level: reasoningLevel, initials: initialsInput.value.trim(), turn_number: turnNumber })
+                    body: JSON.stringify({ message, conversation_id: conversationId, reasoning_level: reasoningLevel, initials: initialsInput.value.trim(), turn_number: turnNumber, recent_messages: recentMessages })
                 });
 
                 if (streamResp.ok) {
@@ -1175,6 +1180,8 @@
                                     buildFeedbackBar(msgIndex);
                                 messageHistory.push({ message, response: data.full_text, reasoning_level: reasoningLevel, turn_id: data.turn_id || '', turn_number: turnNumber });
                                 messagesEl.scrollTop = messagesEl.scrollHeight;
+                                // Dim graph nodes not mentioned in the response
+                                dimUnmentionedNodes(data.full_text);
                             } else if (data.type === 'error') {
                                 assistantDiv.innerHTML = `<strong>Error:</strong> ${data.text}`;
                             }
@@ -1189,7 +1196,7 @@
                     const resp = await fetch(`${API_BASE}/chat`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ message, conversation_id: conversationId, reasoning_level: reasoningLevel, initials: initialsInput.value.trim(), turn_number: turnNumber })
+                        body: JSON.stringify({ message, conversation_id: conversationId, reasoning_level: reasoningLevel, initials: initialsInput.value.trim(), turn_number: turnNumber, recent_messages: recentMessages })
                     });
                     const data = await resp.json();
 
@@ -1202,9 +1209,10 @@
                         buildFeedbackBar(msgIndex);
                     messageHistory.push({ message, response: data.response, reasoning_level: reasoningLevel, turn_id: data.turn_id || '', turn_number: turnNumber });
                     messagesEl.scrollTop = messagesEl.scrollHeight;
-                    // Show graph visualization if component matched
+                    // Show graph visualization and dim nodes not in the response
                     if (data.graph_viz) {
                         renderGraphViz(data.graph_viz);
+                        dimUnmentionedNodes(data.response);
                     }
                 }
 
@@ -1224,6 +1232,12 @@
 
         function renderGraphViz(graphData) {
             if (!graphData || !graphData.nodes || graphData.nodes.length === 0) return;
+            // Debug: log node types and shapes to diagnose rendering
+            const typeBreakdown = {};
+            graphData.nodes.forEach(n => { typeBreakdown[n.type || '(empty)'] = (typeBreakdown[n.type || '(empty)'] || 0) + 1; });
+            console.log('[graph] data:', graphData.nodes.length, 'nodes',
+                'types:', typeBreakdown, 'queried:', graphData.queried_ids);
+            console.log('[graph] all nodes:', graphData.nodes.map(n => ({ id: n.id, type: n.type, name: n.name })));
 
             const exampleSectionEl = document.getElementById('example-questions-section');
             const graphPanelEl = document.getElementById('graph-panel');
@@ -1236,40 +1250,83 @@
             toggleBtn.innerHTML = '&#9776; Machine Graph';
             sidebarEl.classList.add('open', 'graph-mode');
 
-            // Brand colors for world model node types
-            const colors = {
-                component:     { background: '#0598B3', border: '#047a91' },
-                system:        { background: '#6B4C9A', border: '#503a75' },
+            // Brand colors by vertex type
+            const typeColors = {
+                symptom:   { background: '#F3802B', border: '#d96e1e' },  // Gent orange
+                cause:     { background: '#DC3545', border: '#b02a37' },  // Red
+                component: { background: '#0598B3', border: '#047a91' },  // Aidan blue
+                fix:       { background: '#28A745', border: '#1e7e34' },  // Green
+                system:    { background: '#00528A', border: '#003d66' },  // Gent blue
             };
+            // Shape mapping: symptom=diamond, fix=square, system=box, everything else=dot
+            const typeShapes = {
+                symptom: 'diamond', fix: 'square', system: 'box',
+            };
+            // Font color: white text only for shapes with text INSIDE (box)
+            // dot/diamond/square render text BELOW the node on the white canvas
+            const whiteFontTypes = new Set(['system']);
 
-            // Build vis.js nodes
+            // Starting nodes the classifier picked — highlighted with orange border
+            const queriedIds = new Set(graphData.queried_ids || []);
+
+            // Build vis.js nodes — shape/color by type, starting nodes get orange border
+            // Shapes: box has text INSIDE; dot/diamond/square have text BELOW
             const nodes = new vis.DataSet(graphData.nodes.map(n => {
-                const sizes = { system: 22, component: 12 };
+                const isQueried = queriedIds.has(n.id);
+                const baseColor = typeColors[n.type] || typeColors.component;
+                const color = isQueried
+                    ? { background: baseColor.background, border: '#F3802B' }
+                    : baseColor;
+                const shape = typeShapes[n.type] || 'dot';
+                const isBox = (shape === 'box');
+                // Diamonds/squares need bigger size to be visible (text goes below, not inside)
+                const isShapedNode = (shape === 'diamond' || shape === 'square');
+                const nodeSize = isQueried ? 20
+                    : isShapedNode ? 16
+                    : isBox ? 22
+                    : 12;
+
                 return {
                     id: n.id,
-                    label: wordWrap(n.name || n.id, 14),
-                    color: colors[n.type] || colors.component,
-                    font: { color: '#333', size: n.type === 'system' ? 11 : 10, face: 'Arial' },
-                    shape: 'dot',
-                    size: sizes[n.type] || 12,
-                    borderWidth: 2,
+                    label: wordWrap(n.name || n.id, isBox ? 18 : 12),
+                    color: color,
+                    font: {
+                        color: whiteFontTypes.has(n.type) ? '#fff' : '#333',
+                        size: isBox ? 12 : 11,
+                        face: 'Arial',
+                    },
+                    shape: shape,
+                    size: nodeSize,
+                    borderWidth: isQueried ? 4 : 2,
                     _data: n,
                 };
             }));
             graphNodes = nodes;
 
-            // Build legend — only show types present in this graph
+            // Build legend dynamically from types present in the graph
             const typesPresent = new Set(graphData.nodes.map(n => n.type));
-            const legendItems = [];
-            if (typesPresent.has('system'))    legendItems.push({ color: '#6B4C9A', label: 'System' });
-            if (typesPresent.has('component')) legendItems.push({ color: '#0598B3', label: 'Component' });
-
             const legendEl = document.getElementById('graph-legend');
-            legendEl.innerHTML = legendItems.map(item =>
-                '<span class="graph-legend-item">' +
-                '<span class="graph-legend-dot" style="background:' + item.color + '"></span> ' +
-                item.label + '</span>'
-            ).join('');
+            // Legend config: css class, background color, label — ordered logically
+            const legendConfig = [
+                { type: 'symptom',   cls: 'graph-legend-diamond', bg: '#F3802B', label: 'Symptom' },
+                { type: 'cause',     cls: 'graph-legend-dot',     bg: '#DC3545', label: 'Cause' },
+                { type: 'fix',       cls: 'graph-legend-square',  bg: '#28A745', label: 'Fix' },
+                { type: 'component', cls: 'graph-legend-dot',     bg: '#0598B3', label: 'Component' },
+                { type: 'system',    cls: 'graph-legend-box',     bg: '#00528A', label: 'System' },
+            ];
+            let legendHtml = '';
+            for (const lc of legendConfig) {
+                if (typesPresent.has(lc.type)) {
+                    legendHtml += '<span class="graph-legend-item">' +
+                        '<span class="' + lc.cls + '" style="background:' + lc.bg + '"></span> ' + lc.label + '</span>';
+                }
+            }
+            // Add "Queried" indicator if starting nodes are highlighted
+            if (queriedIds.size > 0) {
+                legendHtml += '<span class="graph-legend-item">' +
+                    '<span class="graph-legend-dot" style="background:#eee;border:3px solid #F3802B"></span> Queried</span>';
+            }
+            legendEl.innerHTML = legendHtml;
 
             // Build vis.js edges — track pairs to curve duplicates apart
             const edgePairCount = {};
@@ -1281,9 +1338,13 @@
                 // Alternate curve direction for duplicate edges so they don't overlap
                 const smoothType = count <= 1 ? 'cubicBezier' : (count % 2 === 0 ? 'curvedCW' : 'curvedCCW');
                 const roundness = count <= 1 ? 0.5 : 0.3 + (count * 0.1);
-                // Only label non-obvious edges — "contains" is clear from hierarchy
-                const edgeLabel = (e.label === 'contains') ? '' :
-                    (e.priority ? 'P' + e.priority : (e.label || ''));
+                // Human-readable edge labels — "contains" hidden (obvious from hierarchy)
+                const labelMap = {
+                    contains: '', connects_to: 'connects to', drives: 'drives',
+                    caused_by: 'caused by', involves: 'involves', fixed_by: 'fixed by',
+                };
+                const edgeLabel = e.priority ? 'P' + e.priority :
+                    (labelMap[e.label] !== undefined ? labelMap[e.label] : (e.label || ''));
                 return {
                     id: 'e' + i,
                     from: e.from_id,
@@ -1312,9 +1373,10 @@
 
             // Left-to-right layout: system on left → components spreading vertically
             // LR fits the tall/narrow sidebar better than UD (440px wide, lots of vertical room)
+            // Spacing scales with node count — more nodes = tighter but still readable
             const nodeCount = graphData.nodes.length;
-            const spacing = nodeCount <= 6 ? 100 : nodeCount <= 12 ? 70 : 50;
-            const levelSep = nodeCount <= 6 ? 180 : nodeCount <= 12 ? 150 : 120;
+            const spacing = nodeCount <= 6 ? 120 : nodeCount <= 12 ? 90 : 70;
+            const levelSep = nodeCount <= 6 ? 200 : nodeCount <= 12 ? 170 : 140;
             graphNetwork = new vis.Network(container, { nodes, edges }, {
                 layout: {
                     hierarchical: {
@@ -1325,7 +1387,12 @@
                     }
                 },
                 physics: false,
-                interaction: { zoomView: true, dragView: true, hover: true },
+                interaction: {
+                    zoomView: true,
+                    dragView: true,
+                    dragNodes: true,   // users can grab and reposition nodes
+                    hover: true,
+                },
             });
 
             // Fit graph into canvas with padding — double-tap to handle layout settling
@@ -1368,33 +1435,84 @@
 
             detailEl.style.display = 'block';
 
-            // Type badge
-            const typeColors = { component: '#0598B3', system: '#6B4C9A' };
+            // Type badge — colors match graph node colors
+            const badgeColors = {
+                symptom: '#F3802B', cause: '#DC3545', fix: '#28A745',
+                component: '#0598B3', system: '#00528A',
+            };
             typeEl.textContent = (nodeData.type || '').charAt(0).toUpperCase() + (nodeData.type || '').slice(1);
-            typeEl.style.background = typeColors[nodeData.type] || '#666';
+            typeEl.style.background = badgeColors[nodeData.type] || '#666';
 
             // Name and description
             nameEl.textContent = nodeData.name || nodeData.id;
             descEl.textContent = nodeData.description || '';
-            fixEl.style.display = 'none';
 
-            // "Ask about this" button
-            if (nodeData.type === 'component') {
+            // Show fix detail panel for fix nodes
+            if (nodeData.type === 'fix' && nodeData.description) {
+                fixEl.style.display = 'block';
+                fixEl.textContent = nodeData.description;
+            } else {
+                fixEl.style.display = 'none';
+            }
+
+            // "Ask about this" button — context-aware prompt per node type
+            const askPrompts = {
+                symptom:   'Why is my Davenport showing ' + nodeData.name + '?',
+                cause:     'What causes ' + nodeData.name + ' on the Davenport?',
+                fix:       'How do I fix ' + nodeData.name + ' on the Davenport?',
+                component: 'Tell me about the ' + nodeData.name + ' on the Davenport',
+                system:    'How does the ' + nodeData.name + ' work on the Davenport?',
+            };
+            const prompt = askPrompts[nodeData.type];
+            if (prompt) {
                 askBtn.style.display = 'block';
                 askBtn.textContent = 'Ask about ' + nodeData.name;
                 askBtn.onclick = () => {
-                    inputEl.value = 'Tell me about the ' + nodeData.name + ' on the Davenport';
-                    sendMessage();
-                };
-            } else if (nodeData.type === 'system') {
-                askBtn.style.display = 'block';
-                askBtn.textContent = 'Ask about ' + nodeData.name;
-                askBtn.onclick = () => {
-                    inputEl.value = 'How does the ' + nodeData.name + ' work on the Davenport?';
+                    inputEl.value = prompt;
                     sendMessage();
                 };
             } else {
                 askBtn.style.display = 'none';
+            }
+        }
+
+        function dimUnmentionedNodes(responseText) {
+            // Dim graph nodes not mentioned in the agent response so the user
+            // can focus on what was actually discussed.
+            if (!graphNodes || !graphNetwork) return;
+            const textLower = responseText.toLowerCase();
+            const updates = [];
+
+            graphNodes.forEach(node => {
+                const name = (node._data?.name || '').toLowerCase();
+                const id = (node._data?.id || '').toLowerCase();
+                // Humanize the ID for matching: "cutoff_tool" → "cutoff tool"
+                const idWords = id.replace(/_/g, ' ');
+                // Also check individual words >3 chars for partial matches
+                const nameWords = name.split(/\s+/).filter(w => w.length > 3);
+                const idWordList = idWords.split(/\s+/).filter(w => w.length > 3);
+
+                const mentioned = textLower.includes(name)
+                    || textLower.includes(idWords)
+                    || nameWords.some(w => textLower.includes(w))
+                    || idWordList.some(w => textLower.includes(w));
+
+                if (!mentioned) {
+                    // Fade unmentioned nodes: very light fill, dotted border, light grey text
+                    updates.push({
+                        id: node.id,
+                        color: { background: '#f0f0f0', border: '#d0d0d0' },
+                        font: { color: '#c0c0c0', size: 8, face: 'Arial' },
+                        borderWidth: 1,
+                        borderWidthSelected: 1,
+                        shapeProperties: { borderDashes: [4, 4] },
+                    });
+                }
+            });
+
+            if (updates.length > 0) {
+                graphNodes.update(updates);
+                console.log('[graph] dimmed', updates.length, 'unmentioned nodes');
             }
         }
 
@@ -1423,13 +1541,18 @@
             const msgText = latestMsg.textContent.toLowerCase();
             const stopWords = new Set(['the','and','for','that','this','with','from','are','was',
                 'has','have','not','but','can','will','about','into','over','also','been',
-                'check','ensure','verify','inspect','replace','adjust','install','remove']);
-            // Use both name and description as keyword sources
-            const nameWords = name.split(/\s+/).filter(w => w.length > 3 && !stopWords.has(w));
+                'check','ensure','verify','inspect','replace','adjust','install','remove',
+                // Domain stop words — too common in Davenport answers to be distinctive
+                'feed','tool','part','stock','head','body','size','type','work',
+                'side','stop','spring','drive','gear','base','hold','turn','machine']);
+            // Word boundary test helper — avoids "feed" matching inside "feedback"
+            const wordMatch = (word, text) => new RegExp('\\b' + word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i').test(text);
+            // Use both name and description as keyword sources (5+ chars to skip short common words)
+            const nameWords = name.split(/\s+/).filter(w => w.length > 4 && !stopWords.has(w));
             console.log('[highlight] nameWords:', nameWords);
             if (!msgText.includes(name)) {
-                // For component graphs: even 1 distinctive keyword match is useful
-                const hits = nameWords.filter(w => msgText.includes(w)).length;
+                // Need at least 1 keyword match in the full text to proceed
+                const hits = nameWords.filter(w => wordMatch(w, msgText)).length;
                 console.log('[highlight] keyword hits in full text:', hits);
                 if (hits < 1) { console.log('[highlight] bail: no keyword hits'); return; }
             }
@@ -1441,7 +1564,7 @@
 
             // Build search keywords: distinctive words from name + description
             const keywords = [...new Set([...nameWords,
-                ...(desc || '').split(/\s+/).filter(w => w.length > 3 && !stopWords.has(w))])
+                ...(desc || '').split(/\s+/).filter(w => w.length > 4 && !stopWords.has(w))])
             ].slice(0, 8);
             console.log('[highlight] keywords:', keywords);
 
@@ -1452,9 +1575,9 @@
                     matches.push({ el: block, score: 10 });
                     continue;
                 }
-                // For component graphs: any 1 distinctive keyword hit highlights the block
-                const score = keywords.filter(w => blockText.includes(w)).length;
-                if (score >= 1) {
+                // Require 2+ keyword hits for partial matches (avoids single-word false positives)
+                const score = keywords.filter(w => wordMatch(w, blockText)).length;
+                if (score >= 2) {
                     matches.push({ el: block, score });
                 }
             }

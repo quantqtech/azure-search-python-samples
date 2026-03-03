@@ -2,11 +2,17 @@
 graph_helper.py — Query-time graph functions for the Function App (V3 Graph RAG).
 
 Slim version of graph_client.py containing only what's needed at request time:
-connection, world model building, component graph visualization, and usage tracking.
+connection, world model (Layer 1), generic traversal (Layer 2), and usage tracking.
 Build-time CRUD functions live in the parent directory's graph_client.py.
+
+Layer 2 architecture: ONE generic traversal, TWO outputs.
+  classify_graph_nodes() → 1-3 starting vertex IDs (any type)
+  traverse_neighborhood() → walk 1-2 hops outward → collect nodes + edges
+  build_graph_context() → serialize as text for agent prompt
+  build_graph_viz() → serialize as vis.js nodes/edges for sidebar
 """
 
-import os, logging
+import os, json, logging
 from datetime import datetime, timezone
 import nest_asyncio
 nest_asyncio.apply()  # gremlinpython runs its own event loop; Azure Functions already has one
@@ -120,486 +126,354 @@ def query_key_relationships(client):
 
 
 def build_world_model(client):
-    """Build a compact structural summary of the Davenport machine from the graph.
+    """Build a lean structural summary of the Davenport machine from the graph.
 
-    This is Layer 1 of the V3 Graph RAG — orientation, not encyclopedia.
-    Tells the LLM what systems exist, their key components, and how they connect.
-    Explicitly signals "search for details" to avoid the LLM treating this as complete.
+    Layer 1 of V3 Graph RAG — orientation only, not a catalog.
+    Just tells the LLM what systems exist so it knows the machine's structure.
+    Component details and relationships come from Layer 2 traversal when relevant.
 
-    Returns a formatted string (~400-600 tokens) or empty string if graph is empty.
+    Returns a formatted string (~50-80 tokens) or empty string if graph is empty.
     """
     systems = query_all_systems(client)
     if not systems:
         return ""
 
-    lines = [
-        "DAVENPORT MODEL B — MACHINE OVERVIEW "
-        "(structural summary — search knowledge base for details):",
-        "",
-        "Systems and key components:",
-    ]
+    system_names = sorted(s["name"] for s in systems if s.get("name"))
+    return (
+        "DAVENPORT MODEL B SYSTEMS "
+        "(search knowledge base for component details and procedures): "
+        + ", ".join(system_names) + "."
+    )
 
-    for sys in sorted(systems, key=lambda s: s["name"]):
-        components = query_components(client, sys["id"])
-        comp_names = [c["name"] for c in components if c["name"]]
 
-        # Cap component list and signal there's more
-        if len(comp_names) > MAX_COMPONENTS_PER_SYSTEM:
-            shown = ", ".join(comp_names[:MAX_COMPONENTS_PER_SYSTEM])
-            lines.append(f"  {sys['name']}: {shown}, ... ({len(comp_names)} total)")
-        elif comp_names:
-            lines.append(f"  {sys['name']}: {', '.join(comp_names)}")
+# ---------------------------------------------------------------------------
+# Layer 2: Generic graph traversal (one traversal → agent context + sidebar)
+# ---------------------------------------------------------------------------
+
+def traverse_neighborhood(client, vertex_ids, max_hops=2):
+    """Walk outward from starting vertices, collecting all nodes and edges.
+
+    This is the core of Layer 2 — one generic traversal that works for any
+    vertex type (symptom, component, system, etc.). The graph structure
+    determines what's relevant, not our routing code.
+
+    Each node includes a 'hop' field: 0 = starting node, 1 = direct neighbor, etc.
+    Agent context uses all hops; sidebar viz can filter to fewer hops.
+
+    Returns (nodes_dict, edges_list):
+      nodes_dict: {id → {id, name, type, description, hop, ...}}
+      edges_list: [{from_id, to_id, label, priority}]
+    """
+    seen_nodes = {}      # id → node dict
+    seen_edge_keys = set()  # "from|to|label" dedup keys
+    edges = []
+    frontier = set(vertex_ids)
+
+    for hop in range(max_hops):
+        next_frontier = set()
+        for vid in frontier:
+            # Fetch vertex details if we haven't seen this node yet
+            if vid not in seen_nodes:
+                try:
+                    raw = client.submit("g.V(vid).valueMap(true)", {"vid": vid}).all().result()
+                    if raw:
+                        v = raw[0]
+                        seen_nodes[vid] = {
+                            "id": vid,
+                            "name": _first(v.get("name", [vid])),
+                            "type": _first(v.get("type", [""])),
+                            "description": _first(v.get("description", [""])),
+                            "category": _first(v.get("category", [""])),
+                            "aliases": _parse_json_list(v.get("aliases", ["[]"])),
+                            "hop": hop,  # distance from starting nodes
+                        }
+                    else:
+                        continue  # vertex doesn't exist — skip
+                except Exception as e:
+                    logger.warning(f"traverse_neighborhood vertex fetch failed for {vid}: {e}")
+                    continue
+
+            # Fetch all outgoing edges
+            try:
+                out_raw = client.submit(
+                    "g.V(vid).outE()"
+                    ".project('label','to_id','priority')"
+                    ".by(label)"
+                    ".by(inV().id())"
+                    ".by(coalesce(values('priority'), constant(0)))",
+                    {"vid": vid},
+                ).all().result()
+                for r in out_raw:
+                    to_id = r.get("to_id", "")
+                    label = r.get("label", "")
+                    edge_key = f"{vid}|{to_id}|{label}"
+                    if edge_key not in seen_edge_keys:
+                        seen_edge_keys.add(edge_key)
+                        edges.append({
+                            "from_id": vid,
+                            "to_id": to_id,
+                            "label": label,
+                            "priority": r.get("priority", 0) or None,
+                        })
+                    if to_id not in seen_nodes:
+                        next_frontier.add(to_id)
+            except Exception as e:
+                logger.warning(f"traverse_neighborhood outE failed for {vid}: {e}")
+
+            # Fetch all incoming edges
+            try:
+                in_raw = client.submit(
+                    "g.V(vid).inE()"
+                    ".project('label','from_id','priority')"
+                    ".by(label)"
+                    ".by(outV().id())"
+                    ".by(coalesce(values('priority'), constant(0)))",
+                    {"vid": vid},
+                ).all().result()
+                for r in in_raw:
+                    from_id = r.get("from_id", "")
+                    label = r.get("label", "")
+                    edge_key = f"{from_id}|{vid}|{label}"
+                    if edge_key not in seen_edge_keys:
+                        seen_edge_keys.add(edge_key)
+                        edges.append({
+                            "from_id": from_id,
+                            "to_id": vid,
+                            "label": label,
+                            "priority": r.get("priority", 0) or None,
+                        })
+                    if from_id not in seen_nodes:
+                        next_frontier.add(from_id)
+            except Exception as e:
+                logger.warning(f"traverse_neighborhood inE failed for {vid}: {e}")
+
+        # Next hop starts from newly discovered nodes only
+        frontier = next_frontier - set(seen_nodes.keys())
+        if not frontier:
+            break  # no new nodes to explore
+
+    # Fetch details for frontier nodes discovered on the last hop
+    # (we found their IDs via edges but haven't fetched their properties)
+    for vid in frontier | (next_frontier if max_hops > 0 else set()):
+        if vid not in seen_nodes:
+            try:
+                raw = client.submit("g.V(vid).valueMap(true)", {"vid": vid}).all().result()
+                if raw:
+                    v = raw[0]
+                    seen_nodes[vid] = {
+                        "id": vid,
+                        "name": _first(v.get("name", [vid])),
+                        "type": _first(v.get("type", [""])),
+                        "description": _first(v.get("description", [""])),
+                        "category": _first(v.get("category", [""])),
+                        "aliases": _parse_json_list(v.get("aliases", ["[]"])),
+                        "hop": max_hops,  # outermost hop
+                    }
+            except Exception:
+                pass
+
+    logger.info(f"traverse_neighborhood: {len(vertex_ids)} starting → {len(seen_nodes)} nodes, {len(edges)} edges")
+    return seen_nodes, edges
+
+
+def build_graph_context(nodes, edges, starting_ids):
+    """Serialize traversal results as text for the agent prompt.
+
+    Organizes the graph neighborhood into a readable format:
+    1. Starting nodes with descriptions
+    2. Direct relationships (what connects to what)
+    3. Diagnostic chains (symptom→cause→fix) if present
+
+    Works for ANY vertex type — the graph structure determines the format.
+    """
+    if not nodes:
+        return ""
+
+    lines = ["GRAPH CONTEXT (machine knowledge relevant to this question):"]
+
+    # Starting nodes first — these are what the classifier identified as relevant
+    for sid in starting_ids:
+        node = nodes.get(sid)
+        if not node:
+            continue
+        ntype = node.get("type", "")
+        name = node.get("name", sid)
+        desc = node.get("description", "")
+        type_label = f"[{ntype}] " if ntype else ""
+        lines.append(f"  {type_label}{name}" + (f" — {desc}" if desc else ""))
+
+    # Build adjacency for readable relationship output
+    # Group edges by type for organized presentation
+    caused_by = []   # symptom → cause (diagnostic)
+    fixed_by = []    # cause → fix
+    involves = []    # cause → component
+    structural = []  # contains, connects_to, drives
+
+    for e in edges:
+        label = e.get("label", "")
+        from_node = nodes.get(e["from_id"], {})
+        to_node = nodes.get(e["to_id"], {})
+        from_name = from_node.get("name", e["from_id"])
+        to_name = to_node.get("name", e["to_id"])
+
+        if label == "caused_by":
+            priority = e.get("priority")
+            category = to_node.get("category", "")
+            cat_text = f"[{category}] " if category else ""
+            to_desc = to_node.get("description", "")
+            caused_by.append((priority or 99, f"{cat_text}{to_desc or to_name}", e["to_id"]))
+        elif label == "fixed_by":
+            fix_desc = to_node.get("description", to_name)
+            fixed_by.append((e["from_id"], fix_desc))
+        elif label == "involves":
+            involves.append((e["from_id"], to_name))
         else:
-            lines.append(f"  {sys['name']}")
+            verb = {"contains": "contains", "connects_to": "connects to", "drives": "drives"}.get(label, label)
+            structural.append(f"{from_name} {verb} {to_name}")
 
-    # Add key mechanical relationships (connects_to, drives)
-    relationships = query_key_relationships(client)
-    if relationships:
+    # Diagnostic chain: causes sorted by priority with fixes
+    if caused_by:
+        # Build fix lookup: cause_id → fix description
+        fix_map = {cause_id: desc for cause_id, desc in fixed_by}
+        comp_map = {cause_id: comp for cause_id, comp in involves}
+
         lines.append("")
-        lines.append("Key mechanical relationships:")
-        # Show a representative sample — cap at ~10 to keep it compact
-        shown_rels = relationships[:10]
-        for r in shown_rels:
-            desc = f" — {r['description']}" if r["description"] else ""
-            verb = "drives" if r["label"] == "drives" else "connects to"
-            lines.append(f"  - {r['from_name']} {verb} {r['to_name']}{desc}")
-        if len(relationships) > 10:
-            lines.append(f"  ... and {len(relationships) - 10} more relationships")
+        lines.append("DIAGNOSTIC CAUSES (in priority order):")
+        caused_by.sort(key=lambda x: x[0])
+        for i, (priority, desc, cause_id) in enumerate(caused_by, 1):
+            comp = comp_map.get(cause_id, "")
+            comp_text = f" (component: {comp})" if comp else ""
+            fix = fix_map.get(cause_id, "")
+            fix_text = f" — Fix: {fix}" if fix else ""
+            lines.append(f"  {i}. {desc}{comp_text}{fix_text}")
+
+    # Structural relationships
+    if structural:
+        lines.append("")
+        lines.append("STRUCTURAL RELATIONSHIPS:")
+        for rel in structural[:15]:  # cap to keep context reasonable
+            lines.append(f"  - {rel}")
 
     lines.append("")
-    lines.append(
-        "NOTE: This is a structural overview only. Each system has additional "
-        "components and detailed procedures in the knowledge base. Always search "
-        "for specifics."
-    )
+    lines.append("Use this graph context to guide your search. "
+                  "Include information from this context even if search results don't mention it directly.")
 
     return "\n".join(lines)
 
 
-def query_component_by_name(client, component_name):
-    """Find a component vertex by fuzzy name match. Returns (id, name, description) or None.
+MAX_VIZ_NEIGHBORS = 4  # max child nodes per starting node in the sidebar graph
 
-    Searches for exact case-insensitive match first, then substring containment.
+
+def build_graph_viz(nodes, edges, starting_ids, max_viz_hops=1):
+    """Serialize traversal results as vis.js nodes/edges for the sidebar.
+
+    Filters to nodes within max_viz_hops AND caps children per starting
+    node at MAX_VIZ_NEIGHBORS so the sidebar stays clean and focused.
+    Agent context (build_graph_context) still uses the full traversal.
     """
-    try:
-        # Get all component vertices — small graph, simpler than Gremlin text predicates
-        raw = client.submit("g.V().has('type', 'component').valueMap(true)").all().result()
-    except Exception as e:
-        logger.warning(f"query_component_by_name failed: {e}")
+    if not nodes or len(nodes) < 2:
         return None
 
-    name_lower = component_name.lower()
+    # Always include starting nodes (hop 0)
+    viz_node_ids = set(sid for sid in starting_ids if sid in nodes)
 
-    # Pass 1: exact match (case-insensitive)
-    for v in raw:
-        vid = _first(v.get("id"))
-        vname = _first(v.get("name", [""]))
-        if vname.lower() == name_lower:
-            return {"id": vid, "name": vname, "description": _first(v.get("description", [""]))}
+    # Build edge lookup: which nodes connect directly to each starting node
+    # Cap neighbors per starting node to keep the graph manageable
+    neighbor_count = {sid: 0 for sid in starting_ids}
+    for nid, node in nodes.items():
+        if nid in viz_node_ids:
+            continue  # already included as starting node
+        if node.get("hop", 0) > max_viz_hops:
+            continue  # beyond hop limit
 
-    # Pass 2: component name contains the search term or vice versa
-    for v in raw:
-        vid = _first(v.get("id"))
-        vname = _first(v.get("name", [""]))
-        if name_lower in vname.lower() or vname.lower() in name_lower:
-            return {"id": vid, "name": vname, "description": _first(v.get("description", [""]))}
+        # Find which starting node this neighbor connects to
+        parent_sid = None
+        for e in edges:
+            if e["to_id"] == nid and e["from_id"] in viz_node_ids:
+                parent_sid = e["from_id"]
+                break
+            if e["from_id"] == nid and e["to_id"] in viz_node_ids:
+                parent_sid = e["to_id"]
+                break
 
-    return None
+        if parent_sid:
+            if neighbor_count.get(parent_sid, 0) < MAX_VIZ_NEIGHBORS:
+                viz_node_ids.add(nid)
+                neighbor_count[parent_sid] = neighbor_count.get(parent_sid, 0) + 1
+            # Skip if this starting node already has enough neighbors
+        else:
+            # Not directly connected to a starting node — include if within hop limit
+            viz_node_ids.add(nid)
 
-
-def query_all_components(client):
-    """Return all component vertices — used for component classification matching."""
-    try:
-        raw = client.submit("g.V().has('type', 'component').valueMap(true)").all().result()
-    except Exception as e:
-        logger.warning(f"query_all_components failed: {e}")
-        return []
-
-    return [
-        {
-            "id": _first(v.get("id")),
-            "name": _first(v.get("name", [""])),
-            "description": _first(v.get("description", [""])),
+    # Build viz node list
+    viz_nodes = []
+    for nid in viz_node_ids:
+        node = nodes[nid]
+        viz_node = {
+            "id": nid,
+            "name": node.get("name", nid),
+            "type": node.get("type", ""),
+            "description": node.get("description", ""),
         }
-        for v in raw
+        if node.get("category"):
+            viz_node["category"] = node["category"]
+        viz_nodes.append(viz_node)
+
+    # Only include edges where both endpoints are in the filtered set
+    viz_edges = [
+        {
+            "from_id": e["from_id"],
+            "to_id": e["to_id"],
+            "label": e["label"],
+            "priority": e.get("priority"),
+        }
+        for e in edges
+        if e["from_id"] in viz_node_ids and e["to_id"] in viz_node_ids
     ]
 
-
-def build_component_graph_viz(client, component_id):
-    """Build a vis.js-ready node/edge structure centered on a component.
-
-    World model only — shows the component's structural context:
-    - Parent system (via reverse 'contains' edge)
-    - Sibling components (other components under same parent system)
-    - Connected components (via 'connects_to' and 'drives' edges, both directions)
-
-    NO symptoms or causes — those come from docs via RAG, not the graph.
-
-    Returns a dict with nodes, edges, and component_name for the frontend, or None.
-    """
-    # Get component vertex details
-    try:
-        comp_raw = client.submit(
-            "g.V(cid).valueMap(true)", {"cid": component_id}
-        ).all().result()
-    except Exception as e:
-        logger.warning(f"build_component_graph_viz failed for {component_id}: {e}")
-        return None
-
-    if not comp_raw:
-        return None
-
-    comp_name = _first(comp_raw[0].get("name", [component_id]))
-    comp_desc = _first(comp_raw[0].get("description", [""]))
-
-    nodes = []
-    edges = []
-    seen_ids = {component_id}  # track added node IDs to deduplicate
-    parent_system_ids = []  # track parent system IDs for sibling lookup
-
-    # Root node: the component itself
-    nodes.append({
-        "id": component_id,
-        "name": comp_name,
-        "description": comp_desc,
-        "type": "component",
-    })
-
-    # Parent system (component ← system via 'contains')
-    try:
-        sys_raw = client.submit(
-            "g.V(cid).in('contains').valueMap(true)", {"cid": component_id}
-        ).all().result()
-        for s in sys_raw:
-            sid = _first(s.get("id"))
-            if sid and sid not in seen_ids:
-                seen_ids.add(sid)
-                parent_system_ids.append(sid)
-                nodes.append({
-                    "id": sid,
-                    "name": _first(s.get("name", [""])),
-                    "description": _first(s.get("description", [""])),
-                    "type": "system",
-                })
-                edges.append({
-                    "from_id": sid,
-                    "to_id": component_id,
-                    "label": "contains",
-                    "priority": None,
-                })
-    except Exception:
-        pass
-
-    # Sibling components — other components under the same parent system
-    for sid in parent_system_ids:
-        try:
-            sib_raw = client.submit(
-                "g.V(sys_id).out('contains').has('type','component').valueMap(true)",
-                {"sys_id": sid},
-            ).all().result()
-            for sib in sib_raw:
-                sib_id = _first(sib.get("id"))
-                if sib_id and sib_id not in seen_ids:
-                    seen_ids.add(sib_id)
-                    nodes.append({
-                        "id": sib_id,
-                        "name": _first(sib.get("name", [""])),
-                        "description": _first(sib.get("description", [""])),
-                        "type": "component",
-                    })
-                    edges.append({
-                        "from_id": sid,
-                        "to_id": sib_id,
-                        "label": "contains",
-                        "priority": None,
-                    })
-        except Exception:
-            pass
-
-    # Outgoing connections: component → other components via connects_to / drives
-    try:
-        out_raw = client.submit(
-            "g.V(cid).outE('connects_to','drives')"
-            ".project('label','to_id','to_name','to_desc','desc')"
-            ".by(label)"
-            ".by(inV().id())"
-            ".by(inV().values('name'))"
-            ".by(coalesce(inV().values('description'), constant('')))"
-            ".by(coalesce(values('description'), constant('')))",
-            {"cid": component_id},
-        ).all().result()
-        for r in out_raw:
-            tid = r.get("to_id", "")
-            if tid and tid not in seen_ids:
-                seen_ids.add(tid)
-                nodes.append({
-                    "id": tid,
-                    "name": r.get("to_name", ""),
-                    "description": r.get("to_desc", ""),
-                    "type": "component",
-                })
-            if tid:
-                edges.append({
-                    "from_id": component_id,
-                    "to_id": tid,
-                    "label": r.get("label", ""),
-                    "priority": None,
-                })
-    except Exception:
-        pass
-
-    # Incoming connections: other components → this component via connects_to / drives
-    try:
-        in_raw = client.submit(
-            "g.V(cid).inE('connects_to','drives')"
-            ".project('label','from_id','from_name','from_desc')"
-            ".by(label)"
-            ".by(outV().id())"
-            ".by(outV().values('name'))"
-            ".by(coalesce(outV().values('description'), constant('')))",
-            {"cid": component_id},
-        ).all().result()
-        for r in in_raw:
-            fid = r.get("from_id", "")
-            if fid and fid not in seen_ids:
-                seen_ids.add(fid)
-                nodes.append({
-                    "id": fid,
-                    "name": r.get("from_name", ""),
-                    "description": r.get("from_desc", ""),
-                    "type": "component",
-                })
-            if fid:
-                edges.append({
-                    "from_id": fid,
-                    "to_id": component_id,
-                    "label": r.get("label", ""),
-                    "priority": None,
-                })
-    except Exception:
-        pass
-
-    # Only return if we found connections beyond the root node
-    if len(nodes) < 2:
-        return None
+    # Log type breakdown for debugging — helps verify symptom/cause/fix types arrive in viz
+    type_counts = {}
+    for vn in viz_nodes:
+        t = vn.get("type", "(none)")
+        type_counts[t] = type_counts.get(t, 0) + 1
+    logger.info(f"build_graph_viz: {len(nodes)} total → {len(viz_nodes)} viz nodes "
+                f"(max {max_viz_hops} hops, {MAX_VIZ_NEIGHBORS} neighbors/start), "
+                f"types: {type_counts}")
 
     return {
-        "component_name": comp_name,
-        "nodes": nodes,
-        "edges": edges,
+        "queried_ids": list(starting_ids),
+        "nodes": viz_nodes,
+        "edges": viz_edges,
     }
 
 
-# ---------------------------------------------------------------------------
-# Symptom traversal (Layer 2 — diagnostic context)
-# ---------------------------------------------------------------------------
+def query_all_vertices_for_classifier(client):
+    """Return all classifiable vertices (symptoms, components, systems) for the LLM classifier.
 
-def query_all_symptoms(client):
-    """Return all symptom vertices — used for symptom classification matching."""
-    try:
-        raw = client.submit("g.V().has('type', 'symptom').valueMap(true)").all().result()
-    except Exception as e:
-        logger.warning(f"query_all_symptoms failed: {e}")
-        return []
-
-    return [
-        {
-            "id": _first(v.get("id")),
-            "name": _first(v.get("name", [""])),
-            "description": _first(v.get("description", [""])),
-            "aliases": _parse_json_list(v.get("aliases", ["[]"])),
-        }
-        for v in raw
-    ]
-
-
-def query_causes(client, symptom_id):
-    """Traverse symptom → causes (priority-ordered) → components + fixes.
-
-    Uses separate queries because Cosmos DB Gremlin doesn't support
-    complex coalesce/select in a single traversal.
-
-    Returns: [{cause_id, cause_desc, priority, category, component_id, component_name, fix_id, fix_desc}]
+    These are the valid starting points for graph traversal. Causes and fixes
+    are intermediate nodes reached by traversal, not by classification.
     """
-    try:
-        raw = client.submit(
-            "g.V(symptom_id).outE('caused_by').order().by('priority')"
-            ".project('priority','cause_id')"
-            ".by('priority')"
-            ".by(inV().id())",
-            {"symptom_id": symptom_id},
-        ).all().result()
-    except Exception as e:
-        logger.warning(f"query_causes failed for {symptom_id}: {e}")
-        return []
-
-    if not raw:
-        return []
-
     results = []
-    for row in raw:
-        cause_id = row.get("cause_id", "")
-        priority = row.get("priority", 99)
 
-        # Get cause vertex details
-        cause_data = {}
+    for vertex_type in ["symptom", "component", "system"]:
         try:
-            cv = client.submit("g.V(cid).valueMap(true)", {"cid": cause_id}).all().result()
-            if cv:
-                cause_data = cv[0]
-        except Exception:
-            pass
-
-        # Get component via involves edge
-        comp_id, comp_name = "", ""
-        try:
-            comp_raw = client.submit("g.V(cid).out('involves').valueMap(true)", {"cid": cause_id}).all().result()
-            if comp_raw:
-                comp_id = _first(comp_raw[0].get("id", [""]))
-                comp_name = _first(comp_raw[0].get("name", [""]))
-        except Exception:
-            pass
-
-        # Get fix via fixed_by edge
-        fix_id, fix_desc = "", ""
-        try:
-            fix_raw = client.submit("g.V(cid).out('fixed_by').valueMap(true)", {"cid": cause_id}).all().result()
-            if fix_raw:
-                fix_id = _first(fix_raw[0].get("id", [""]))
-                fix_desc = _first(fix_raw[0].get("description", [""]))
-        except Exception:
-            pass
-
-        results.append({
-            "cause_id": cause_id,
-            "cause_desc": _first(cause_data.get("description", [""])),
-            "priority": priority,
-            "category": _first(cause_data.get("category", [""])),
-            "component_id": comp_id,
-            "component_name": comp_name,
-            "fix_id": fix_id,
-            "fix_desc": fix_desc,
-        })
+            raw = client.submit(
+                "g.V().has('type', vtype).valueMap(true)", {"vtype": vertex_type}
+            ).all().result()
+            for v in raw:
+                entry = {
+                    "id": _first(v.get("id")),
+                    "name": _first(v.get("name", [""])),
+                    "type": vertex_type,
+                    "description": _first(v.get("description", [""])),
+                }
+                if vertex_type == "symptom":
+                    entry["aliases"] = _parse_json_list(v.get("aliases", ["[]"]))
+                results.append(entry)
+        except Exception as e:
+            logger.warning(f"query_all_vertices_for_classifier failed for {vertex_type}: {e}")
 
     return results
-
-
-def build_symptom_context(client, symptom_id):
-    """Build diagnostic checklist for a matched symptom (Layer 2).
-
-    Traverses symptom → causes (priority-ordered) → components + fixes.
-    Returns a formatted string for injection into the agent prompt.
-    """
-    causes = query_causes(client, symptom_id)
-    if not causes:
-        return ""
-
-    lines = [f'KNOWN CAUSES for symptom "{symptom_id}" (in diagnostic priority order):']
-    for i, c in enumerate(causes, 1):
-        category = f"[{c['category']}] " if c["category"] else ""
-        fix_text = f" — Fix: {c['fix_desc']}" if c["fix_desc"] else ""
-        comp_text = f" (component: {c['component_name']})" if c["component_name"] else ""
-        lines.append(f"  {i}. {category}{c['cause_desc']}{comp_text}{fix_text}")
-
-    lines.append("")
-    lines.append("Use this as a diagnostic checklist. Search for document evidence for each cause.")
-    lines.append("Include causes from this list even if search results don't mention them directly.")
-    return "\n".join(lines)
-
-
-def build_component_context(client, component_id):
-    """Build structural context for a matched component (Layer 2).
-
-    Traverses 1-2 hops from the component: parent system, siblings,
-    connected components. For non-diagnostic questions where knowing
-    the component's neighborhood helps the agent search better.
-
-    Returns a formatted string for injection into the agent prompt.
-    """
-    # Get component details
-    try:
-        comp_raw = client.submit("g.V(cid).valueMap(true)", {"cid": component_id}).all().result()
-    except Exception as e:
-        logger.warning(f"build_component_context failed for {component_id}: {e}")
-        return ""
-
-    if not comp_raw:
-        return ""
-
-    comp_name = _first(comp_raw[0].get("name", [component_id]))
-    comp_desc = _first(comp_raw[0].get("description", [""]))
-
-    lines = [f'COMPONENT CONTEXT for "{comp_name}":']
-    if comp_desc:
-        lines.append(f"  Description: {comp_desc}")
-
-    # Parent system
-    try:
-        sys_raw = client.submit("g.V(cid).in('contains').valueMap(true)", {"cid": component_id}).all().result()
-        if sys_raw:
-            sys_name = _first(sys_raw[0].get("name", [""]))
-            lines.append(f"  Part of system: {sys_name}")
-
-            # Sibling components in same system
-            sys_id = _first(sys_raw[0].get("id"))
-            sib_raw = client.submit(
-                "g.V(sys_id).out('contains').has('type','component').valueMap(true)",
-                {"sys_id": sys_id},
-            ).all().result()
-            siblings = [_first(s.get("name", [""])) for s in sib_raw
-                        if _first(s.get("id")) != component_id]
-            if siblings:
-                lines.append(f"  Sibling components: {', '.join(siblings[:8])}")
-    except Exception:
-        pass
-
-    # Connected components (outgoing)
-    connections = []
-    try:
-        out_raw = client.submit(
-            "g.V(cid).outE('connects_to','drives')"
-            ".project('label','to_name','desc')"
-            ".by(label).by(inV().values('name'))"
-            ".by(coalesce(values('description'), constant('')))",
-            {"cid": component_id},
-        ).all().result()
-        for r in out_raw:
-            verb = "drives" if r.get("label") == "drives" else "connects to"
-            desc = f" ({r['desc']})" if r.get("desc") else ""
-            connections.append(f"{comp_name} {verb} {r.get('to_name', '?')}{desc}")
-    except Exception:
-        pass
-
-    # Connected components (incoming)
-    try:
-        in_raw = client.submit(
-            "g.V(cid).inE('connects_to','drives')"
-            ".project('label','from_name','desc')"
-            ".by(label).by(outV().values('name'))"
-            ".by(coalesce(values('description'), constant('')))",
-            {"cid": component_id},
-        ).all().result()
-        for r in in_raw:
-            verb = "drives" if r.get("label") == "drives" else "connects to"
-            desc = f" ({r['desc']})" if r.get("desc") else ""
-            connections.append(f"{r.get('from_name', '?')} {verb} {comp_name}{desc}")
-    except Exception:
-        pass
-
-    if connections:
-        lines.append("  Connections:")
-        for c in connections:
-            lines.append(f"    - {c}")
-
-    lines.append("")
-    lines.append("Use this structural context to guide your search. "
-                  "Related components and connections often share maintenance procedures.")
-
-    # Only return if we have useful context beyond just the name
-    if len(lines) <= 3:
-        return ""
-
-    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
