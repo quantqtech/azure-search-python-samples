@@ -134,6 +134,18 @@
             font-weight: 300;
         }
 
+        .sign-out-btn {
+            padding: 0.4rem 0.9rem;
+            background: transparent;
+            color: white;
+            border: 2px solid rgba(255,255,255,0.4);
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .sign-out-btn:hover { background: var(--gent-blue-dark); }
+
         .container {
             flex: 1;
             display: flex;
@@ -719,6 +731,7 @@
             <div class="powered-by">
                 Powered by <img src="images/Aidan-Logo_White.png" alt="Aidan"> <span>aidan</span> systems
             </div>
+            <button onclick="signOut()" class="sign-out-btn">Sign Out</button>
         </div>
     </header>
 
@@ -788,6 +801,31 @@
         const initialsInput = document.getElementById('user-initials');
 
         const API_BASE = 'https://func-davenport-api.azurewebsites.net/api';
+
+        // --- Auth gate: redirect to login if no token ---
+        if (!sessionStorage.getItem('auth_token')) {
+            window.location.replace('login.html');
+        }
+
+        // Auth header helper — include on every API call
+        function authHeaders() {
+            return { 'Authorization': 'Bearer ' + (sessionStorage.getItem('auth_token') || '') };
+        }
+
+        // Handle 401 responses — token expired or invalid, redirect to login
+        function handleAuthError(resp) {
+            if (resp.status === 401) {
+                sessionStorage.removeItem('auth_token');
+                window.location.replace('login.html');
+                return true;
+            }
+            return false;
+        }
+
+        function signOut() {
+            sessionStorage.removeItem('auth_token');
+            window.location.replace('login.html');
+        }
 
         // Conversation state
         let conversationId = null;
@@ -980,7 +1018,7 @@
 
             fetch(`${API_BASE}/feedback`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', ...authHeaders() },
                 body: JSON.stringify({
                     conversation_id: conversationId,
                     turn_id: msg.turn_id || '',
@@ -992,7 +1030,7 @@
                     reasoning_level: msg.reasoning_level,
                     notes: ''
                 })
-            }).catch(err => console.error('Feedback error:', err));
+            }).then(r => { handleAuthError(r); }).catch(err => console.error('Feedback error:', err));
 
             // Visual confirmation
             document.getElementById(`fb-up-${msgIndex}`)?.classList.remove('active-good');
@@ -1024,7 +1062,7 @@
 
             fetch(`${API_BASE}/feedback`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', ...authHeaders() },
                 body: JSON.stringify({
                     conversation_id: conversationId,
                     turn_id: msg.turn_id || '',
@@ -1036,7 +1074,7 @@
                     reasoning_level: msg.reasoning_level,
                     notes
                 })
-            }).catch(err => console.error('Flag error:', err));
+            }).then(r => { handleAuthError(r); }).catch(err => console.error('Flag error:', err));
 
             document.getElementById(`flag-notes-${msgIndex}`)?.classList.remove('open');
             document.getElementById(`fb-flag-${msgIndex}`)?.classList.add('active-flag');
@@ -1071,7 +1109,7 @@
                         await fetch(`${API_BASE}/voice-memo?${params}`, {
                             method: 'POST',
                             body: blob,
-                            headers: { 'Content-Type': 'audio/webm' }
+                            headers: { 'Content-Type': 'audio/webm', ...authHeaders() }
                         });
                         showFeedbackSaved(msgIndex, '✓ Voice note saved');
                     } catch (err) {
@@ -1139,9 +1177,11 @@
                 const recentMessages = messageHistory.slice(-3).map(m => m.message);
                 const streamResp = await fetch(`${API_BASE}/chat/stream`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', ...authHeaders() },
                     body: JSON.stringify({ message, conversation_id: conversationId, reasoning_level: reasoningLevel, initials: initialsInput.value.trim(), turn_number: turnNumber, recent_messages: recentMessages })
                 });
+
+                if (handleAuthError(streamResp)) return;
 
                 if (streamResp.ok) {
                     // --- Streaming path ---
@@ -1200,9 +1240,11 @@
 
                     const resp = await fetch(`${API_BASE}/chat`, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: { 'Content-Type': 'application/json', ...authHeaders() },
                         body: JSON.stringify({ message, conversation_id: conversationId, reasoning_level: reasoningLevel, initials: initialsInput.value.trim(), turn_number: turnNumber, recent_messages: recentMessages })
                     });
+
+                    if (handleAuthError(resp)) return;
                     const data = await resp.json();
 
                     if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);

@@ -214,6 +214,7 @@
             <div class="subtitle">Davenport Support — Admin Panel</div>
         </div>
         <a href="index.html">&#8592; Back to Chat</a>
+        <button onclick="signOut()" style="padding:0.4rem 0.9rem;background:transparent;color:white;border:2px solid rgba(255,255,255,0.4);border-radius:6px;font-size:13px;cursor:pointer;">Sign Out</button>
     </header>
 
     <div class="controls">
@@ -244,6 +245,29 @@
     <script>
         const API_BASE = 'https://func-davenport-api.azurewebsites.net/api';
 
+        // Auth gate — redirect to login if no token
+        if (!sessionStorage.getItem('auth_token')) {
+            window.location.replace('login.html');
+        }
+
+        function authHeaders() {
+            return { 'Authorization': 'Bearer ' + (sessionStorage.getItem('auth_token') || '') };
+        }
+
+        function handleAuthError(resp) {
+            if (resp.status === 401) {
+                sessionStorage.removeItem('auth_token');
+                window.location.replace('login.html');
+                return true;
+            }
+            return false;
+        }
+
+        function signOut() {
+            sessionStorage.removeItem('auth_token');
+            window.location.replace('login.html');
+        }
+
         // Set today's date as default
         const today = new Date().toISOString().split('T')[0];
         document.getElementById('filter-date').value = today;
@@ -268,7 +292,10 @@
             if (date)   params.set('date', date);
 
             try {
-                const res  = await fetch(`${API_BASE}/feedback?${params}`);
+                const res  = await fetch(`${API_BASE}/feedback?${params}`, {
+                    headers: authHeaders()
+                });
+                if (handleAuthError(res)) return;
                 const data = await res.json();
 
                 if (!Array.isArray(data) || data.length === 0) {

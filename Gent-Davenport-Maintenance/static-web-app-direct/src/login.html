@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign In — Davenport Model B Support</title>
+    <style>
+        :root {
+            --gent-blue: #00528A;
+            --gent-blue-dark: #003d66;
+            --gent-orange: #F3802B;
+            --gent-orange-light: #fde8d9;
+            --bg-page: #f0f0f0;
+            --text-primary: #191919;
+            --border-light: #d0d0d0;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: Arial, 'Segoe UI', sans-serif;
+            background: var(--bg-page);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            background: var(--gent-blue);
+            color: white;
+            padding: 1.25rem 2rem;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        header img {
+            height: 50px;
+            border-radius: 6px;
+        }
+
+        header h1 { font-size: 22px; }
+        header .subtitle { font-size: 14px; opacity: 0.85; }
+
+        .login-wrapper {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+
+        .login-card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+            padding: 2.5rem;
+            width: 100%;
+            max-width: 420px;
+        }
+
+        .login-card h2 {
+            font-size: 20px;
+            margin-bottom: 0.5rem;
+            color: var(--gent-blue);
+        }
+
+        .login-card .desc {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 2rem;
+        }
+
+        .form-group {
+            margin-bottom: 1.25rem;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 14px;
+            font-weight: 600;
+            color: #444;
+            margin-bottom: 0.4rem;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 0.85rem 1rem;
+            border: 2px solid var(--border-light);
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.2s;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--gent-blue);
+        }
+
+        .login-btn {
+            width: 100%;
+            padding: 1rem;
+            background: var(--gent-blue);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            min-height: 52px;
+        }
+
+        .login-btn:hover { background: var(--gent-blue-dark); }
+        .login-btn:disabled { background: #aaa; cursor: not-allowed; }
+
+        .error-msg {
+            background: #ffe0e0;
+            color: #8b0000;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            font-size: 14px;
+            margin-bottom: 1.25rem;
+            display: none;
+        }
+
+        .powered-by {
+            text-align: center;
+            padding: 1.5rem;
+            font-size: 13px;
+            color: #888;
+        }
+
+        .powered-by img {
+            height: 18px;
+            vertical-align: middle;
+            margin: 0 4px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <img src="images/Gent-Machine-Logo-Blue-White-Text.jpg" alt="Gent Machine Company">
+        <div>
+            <h1>Davenport Model B Support</h1>
+            <div class="subtitle">5-Spindle Automatic Screw Machine</div>
+        </div>
+    </header>
+
+    <div class="login-wrapper">
+        <div class="login-card">
+            <h2>Sign In</h2>
+            <div class="desc">Enter your shop floor credentials to access the support tool.</div>
+
+            <div class="error-msg" id="error-msg"></div>
+
+            <form id="login-form" onsubmit="handleLogin(event)">
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" autocomplete="username" required autofocus>
+                </div>
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" autocomplete="current-password" required>
+                </div>
+                <button type="submit" class="login-btn" id="login-btn">Sign In</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="powered-by">
+        Powered by <img src="images/Aidan-Logo_White.png" alt="Aidan"> aidan systems
+    </div>
+
+    <script>
+        const API_BASE = 'https://func-davenport-api.azurewebsites.net/api';
+
+        // If already logged in, go straight to chat
+        if (sessionStorage.getItem('auth_token')) {
+            window.location.replace('index.html');
+        }
+
+        async function handleLogin(e) {
+            e.preventDefault();
+            const btn = document.getElementById('login-btn');
+            const errorEl = document.getElementById('error-msg');
+            errorEl.style.display = 'none';
+
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value;
+
+            if (!username || !password) return;
+
+            btn.disabled = true;
+            btn.textContent = 'Signing in...';
+
+            try {
+                const resp = await fetch(`${API_BASE}/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+
+                const data = await resp.json();
+
+                if (resp.ok && data.token) {
+                    sessionStorage.setItem('auth_token', data.token);
+                    window.location.replace('index.html');
+                } else {
+                    errorEl.textContent = data.error || 'Invalid username or password.';
+                    errorEl.style.display = 'block';
+                }
+            } catch (err) {
+                errorEl.textContent = 'Could not connect to server. Please try again.';
+                errorEl.style.display = 'block';
+            }
+
+            btn.disabled = false;
+            btn.textContent = 'Sign In';
+        }
+    </script>
+</body>
+</html>

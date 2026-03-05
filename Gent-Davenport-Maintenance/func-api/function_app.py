@@ -19,6 +19,7 @@ import azure.functions as func
 from azure.identity import DefaultAzureCredential
 from azure.ai.projects import AIProjectClient
 from azurefunctions.extensions.http.fastapi import Request, StreamingResponse, JSONResponse
+import auth_helper
 
 # Pipeline version — increment on each deploy to verify code is live
 PIPELINE_VERSION = "2026-03-01-v11-context-logging"
@@ -1128,6 +1129,33 @@ def extract_categories_tagged(text):
 
 
 # ---------------------------------------------------------------------------
+# Login endpoint — no auth required on this one
+# ---------------------------------------------------------------------------
+
+@app.route(route="auth/login", methods=["POST"])
+async def login(req: Request) -> JSONResponse:
+    """Authenticate shop floor user and return JWT token."""
+    try:
+        body = await req.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+    username = body.get("username", "")
+    password = body.get("password", "")
+
+    if not username or not password:
+        return JSONResponse({"error": "Username and password required"}, status_code=400)
+
+    if not auth_helper.authenticate_user(username, password):
+        logging.warning(f"Failed login attempt for user: {username}")
+        return JSONResponse({"error": "Invalid username or password"}, status_code=401)
+
+    token = auth_helper.create_token(username)
+    logging.info(f"Successful login for user: {username}")
+    return JSONResponse({"token": token, "expires_in": auth_helper.TOKEN_EXPIRY_SECONDS})
+
+
+# ---------------------------------------------------------------------------
 # Non-streaming chat endpoint — fallback if streaming is unavailable
 # ---------------------------------------------------------------------------
 
@@ -1135,6 +1163,11 @@ def extract_categories_tagged(text):
 async def chat(req: Request) -> JSONResponse:
     """Handle chat requests (non-streaming fallback)."""
     logging.info('Chat function processing request')
+
+    # Auth check
+    auth_error = auth_helper.require_auth(req)
+    if auth_error:
+        return auth_error
 
     try:
         req_body = await req.json()
@@ -1297,6 +1330,11 @@ async def chat_stream(req: Request) -> StreamingResponse:
     response.completed event depending on whether the Foundry agent passes through
     token-level events. The generator handles both cases gracefully.
     """
+    # Auth check
+    auth_error = auth_helper.require_auth(req)
+    if auth_error:
+        return auth_error
+
     try:
         body = await req.json()
     except Exception:
@@ -1459,6 +1497,11 @@ async def chat_stream(req: Request) -> StreamingResponse:
 @app.route(route="feedback", methods=["POST"])
 async def submit_feedback(req: Request) -> JSONResponse:
     """Save user feedback (thumbs up/down/flag) for a response."""
+    # Auth check
+    auth_error = auth_helper.require_auth(req)
+    if auth_error:
+        return auth_error
+
     try:
         body = await req.json()
     except Exception:
@@ -1511,6 +1554,11 @@ async def get_feedback(req: Request) -> JSONResponse:
 
     Optional query params: ?rating=flagged&date=2026-02-25
     """
+    # Auth check
+    auth_error = auth_helper.require_auth(req)
+    if auth_error:
+        return auth_error
+
     rating_filter = req.query_params.get("rating")
     date_filter = req.query_params.get("date")
 
@@ -1555,6 +1603,11 @@ async def voice_memo(req: Request) -> JSONResponse:
     Expects raw audio bytes in the request body.
     Query params: conversation_id, initials
     """
+    # Auth check
+    auth_error = auth_helper.require_auth(req)
+    if auth_error:
+        return auth_error
+
     try:
         audio_data = await req.body()
         conv_id = req.query_params.get("conversation_id", "")
