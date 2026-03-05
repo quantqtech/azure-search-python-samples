@@ -338,7 +338,7 @@ def get_graph_context_for_message(message, recent_messages=None):
             return "", None, [], None
 
         # Step 2: traverse outward — one generic traversal for any vertex type
-        nodes, edges = graph_helper.traverse_neighborhood(gremlin, vertex_ids, max_hops=2)
+        nodes, edges = graph_helper.traverse_neighborhood(gremlin, vertex_ids, max_hops=3)
         if not nodes:
             return "", None, vertex_ids, None
 

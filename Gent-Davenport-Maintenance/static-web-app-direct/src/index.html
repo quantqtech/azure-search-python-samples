@@ -264,20 +264,21 @@
         }
 
         #clear-btn {
-            padding: 1rem;
-            background-color: #f5f5f5;
-            border: 2px solid var(--border-light);
+            padding: 0.75rem 1.2rem;
+            background-color: white;
+            border: 2px solid var(--gent-blue);
             border-radius: 8px;
-            font-size: 1.4rem;
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: var(--gent-blue);
             min-height: var(--touch-large);
-            min-width: var(--touch-large);
             cursor: pointer;
-            transition: background-color 0.2s, border-color 0.2s;
+            transition: background-color 0.2s, border-color 0.2s, color 0.2s;
         }
 
         #clear-btn:hover {
-            background-color: var(--gent-orange-light);
-            border-color: var(--gent-orange);
+            background-color: var(--gent-blue);
+            color: white;
         }
 
         /* Collapsible Sidebar */
@@ -319,8 +320,8 @@
             display: block;
         }
 
-        /* When showing graph, sidebar fills available height so vis.js canvas has room */
-        .sidebar.graph-mode {
+        /* When showing graph AND open, sidebar fills available height so vis.js canvas has room */
+        .sidebar.graph-mode.open {
             width: 440px;
             display: flex;
             flex-direction: column;
@@ -731,7 +732,7 @@
             <div class="input-container">
                 <input type="text" id="user-input" placeholder="Ask about your Davenport machine..." autocomplete="off">
                 <button id="send-btn">Send</button>
-                <button id="clear-btn" title="Clear chat and start new topic">&#128260;</button>
+                <button id="clear-btn" title="Clear chat and start new topic">New Topic</button>
             </div>
         </div>
 
@@ -810,6 +811,10 @@
         // ---------------------------------------------------------------
         function toggleSidebar() {
             sidebarEl.classList.toggle('open');
+            // If graph is active and we just opened, refit the network to canvas
+            if (sidebarEl.classList.contains('open') && graphNetwork) {
+                setTimeout(() => graphNetwork.fit({ padding: 30, animation: false }), 150);
+            }
         }
 
         // ---------------------------------------------------------------
@@ -1248,7 +1253,8 @@
             graphPanelEl.classList.add('active');
 
             toggleBtn.innerHTML = '&#9776; Machine Graph';
-            sidebarEl.classList.add('open', 'graph-mode');
+            // Prep graph mode but don't auto-open — user clicks toggle to view
+            sidebarEl.classList.add('graph-mode');
 
             // Brand colors by vertex type
             const typeColors = {

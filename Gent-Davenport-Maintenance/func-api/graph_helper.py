@@ -361,7 +361,7 @@ def build_graph_context(nodes, edges, starting_ids):
     return "\n".join(lines)
 
 
-MAX_VIZ_NEIGHBORS = 4  # max child nodes per starting node in the sidebar graph
+MAX_VIZ_NEIGHBORS = 8  # max child nodes per starting node in the sidebar graph
 
 
 def build_graph_viz(nodes, edges, starting_ids, max_viz_hops=1):
