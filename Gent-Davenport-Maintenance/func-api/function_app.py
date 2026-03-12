@@ -13,7 +13,7 @@ import logging
 import re
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import unquote
 import azure.functions as func
 from azure.identity import DefaultAzureCredential
@@ -1666,3 +1666,273 @@ async def voice_memo(req: Request) -> JSONResponse:
     except Exception as e:
         logging.error(f"Failed to save voice memo: {str(e)}")
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ---------------------------------------------------------------------------
+# Analytics endpoint — admin-only, reads conversation JSONL from blob storage
+# ---------------------------------------------------------------------------
+
+# In-memory cache for analytics (avoid re-reading blobs on tab switches)
+_analytics_cache = None
+_analytics_cache_time = 0
+_ANALYTICS_CACHE_TTL = 300  # 5 minutes
+
+
+@app.route(route="analytics/summary", methods=["GET"])
+async def analytics_summary(req: Request) -> JSONResponse:
+    """Return last 30 days of daily conversation aggregates for the analytics tab.
+
+    Admin-only. Reads JSONL files from analytics/conversations/ blobs.
+    Response includes daily turn counts, avg duration, unique conversations,
+    and timing breakdowns (search, agent, graph).
+    """
+    global _analytics_cache, _analytics_cache_time
+
+    # Admin check
+    auth_result = auth_helper.require_admin(req)
+    if isinstance(auth_result, JSONResponse):
+        return auth_result
+
+    # Return cached result if fresh
+    now = time.time()
+    if _analytics_cache is not None and (now - _analytics_cache_time) < _ANALYTICS_CACHE_TTL:
+        return JSONResponse(_analytics_cache, status_code=200)
+
+    try:
+        blob_service = get_blob_service_client()
+        container = blob_service.get_container_client("analytics")
+
+        today = datetime.now(timezone.utc)
+        days_data = []
+
+        # Read last 30 days of conversation JSONL
+        for days_ago in range(30):
+            day = today - timedelta(days=days_ago)
+            blob_path = f"conversations/{day.year}/{day.month:02d}/{day.day:02d}.jsonl"
+            date_str = day.strftime("%Y-%m-%d")
+
+            day_record = {
+                "date": date_str,
+                "turn_count": 0,
+                "avg_duration_sec": 0,
+                "avg_search_sec": 0,
+                "avg_agent_sec": 0,
+                "avg_graph_sec": 0,
+                "unique_conversations": 0,
+                "unique_users": 0,
+            }
+
+            try:
+                blob_client = container.get_blob_client(blob_path)
+                content = blob_client.download_blob().readall().decode("utf-8")
+                lines = [l for l in content.strip().split("\n") if l.strip()]
+
+                if not lines:
+                    days_data.append(day_record)
+                    continue
+
+                total_duration = 0
+                total_search = 0
+                total_agent = 0
+                total_graph = 0
+                conversation_ids = set()
+                users = set()
+
+                for line in lines:
+                    try:
+                        record = json.loads(line)
+                        total_duration += record.get("duration_ms", 0)
+                        total_search += record.get("timing_search_ms", 0)
+                        total_agent += record.get("timing_agent_ms", 0)
+                        total_graph += record.get("timing_graph_ms", 0)
+                        if record.get("conversation_id"):
+                            conversation_ids.add(record["conversation_id"])
+                        if record.get("initials"):
+                            users.add(record["initials"])
+                    except json.JSONDecodeError:
+                        continue
+
+                count = len(lines)
+                day_record["turn_count"] = count
+                day_record["avg_duration_sec"] = round(total_duration / count / 1000, 1) if count else 0
+                day_record["avg_search_sec"] = round(total_search / count / 1000, 1) if count else 0
+                day_record["avg_agent_sec"] = round(total_agent / count / 1000, 1) if count else 0
+                day_record["avg_graph_sec"] = round(total_graph / count / 1000, 1) if count else 0
+                day_record["unique_conversations"] = len(conversation_ids)
+                day_record["unique_users"] = len(users)
+
+            except Exception:
+                pass  # Blob doesn't exist for this day — zeros
+
+            days_data.append(day_record)
+
+        # Compute totals
+        total_turns = sum(d["turn_count"] for d in days_data)
+        total_convos = sum(d["unique_conversations"] for d in days_data)
+        active_days = sum(1 for d in days_data if d["turn_count"] > 0)
+        all_durations = [d["avg_duration_sec"] for d in days_data if d["turn_count"] > 0]
+        avg_duration = round(sum(all_durations) / len(all_durations), 1) if all_durations else 0
+
+        result = {
+            "days": list(reversed(days_data)),  # oldest first for chart
+            "totals": {
+                "turn_count": total_turns,
+                "avg_duration_sec": avg_duration,
+                "unique_conversations": total_convos,
+                "active_days": active_days,
+            }
+        }
+
+        # Cache result
+        _analytics_cache = result
+        _analytics_cache_time = time.time()
+
+        return JSONResponse(result, status_code=200)
+
+    except Exception as e:
+        logging.error(f"Analytics summary failed: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ---------------------------------------------------------------------------
+# Admin user management — single endpoint, dispatches by action query param
+# Azure Functions can't reliably mix exact + parameterized routes on the same
+# path prefix, so we use: /api/admin/users?action=list|create|delete|reset_password
+# ---------------------------------------------------------------------------
+
+@app.route(route="manage-users", methods=["GET", "POST", "PUT", "DELETE"])
+async def admin_users(req: Request) -> JSONResponse:
+    """Admin user management endpoint. Admin-only.
+
+    Actions (inferred from HTTP method):
+      GET              → list all users (no password hashes)
+      POST             → create user  (body: {username, display_name, password, role})
+      DELETE ?user=X   → delete user X (can't delete yourself)
+      PUT ?user=X      → reset password (body: {password})
+    """
+    auth_result = auth_helper.require_admin(req)
+    if isinstance(auth_result, JSONResponse):
+        return auth_result
+
+    method = req.method.upper()
+
+    # --- LIST ---
+    if method == "GET":
+        users = auth_helper.get_all_users()
+        safe_users = [
+            {"username": u["username"], "display_name": u["display_name"], "role": u["role"]}
+            for u in users
+        ]
+        return JSONResponse(safe_users, status_code=200)
+
+    # --- CREATE ---
+    if method == "POST":
+        try:
+            body = await req.json()
+        except Exception:
+            return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+        username = body.get("username", "").strip().lower()
+        display_name = body.get("display_name", "").strip()
+        password = body.get("password", "")
+        role = body.get("role", "user").strip().lower()
+
+        if not username or not password:
+            return JSONResponse({"error": "username and password are required"}, status_code=400)
+        if role not in ("user", "admin"):
+            return JSONResponse({"error": "role must be 'user' or 'admin'"}, status_code=400)
+        if not display_name:
+            display_name = username.title()
+
+        if auth_helper.get_user_info(username):
+            return JSONResponse({"error": f"User '{username}' already exists"}, status_code=409)
+
+        password_hash = auth_helper.generate_password_hash(password)
+
+        try:
+            from azure.data.tables import TableServiceClient
+            endpoint = f"https://{STORAGE_ACCOUNT}.table.core.windows.net"
+            credential = DefaultAzureCredential()
+            service = TableServiceClient(endpoint=endpoint, credential=credential)
+            table = service.get_table_client("users")
+
+            table.create_entity({
+                "PartitionKey": "users",
+                "RowKey": username,
+                "display_name": display_name,
+                "password_hash": password_hash,
+                "role": role,
+            })
+            auth_helper.invalidate_user_cache()
+
+            logging.info(f"User created: {username} ({display_name}, role={role})")
+            return JSONResponse({"status": "created", "username": username}, status_code=201)
+
+        except Exception as e:
+            logging.error(f"Failed to create user: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    # --- DELETE ---
+    if method == "DELETE":
+        username = req.query_params.get("user", "").strip()
+        if not username:
+            return JSONResponse({"error": "?user= query param required"}, status_code=400)
+
+        if username == auth_result.get("sub", ""):
+            return JSONResponse({"error": "Cannot delete your own account"}, status_code=400)
+
+        try:
+            from azure.data.tables import TableServiceClient
+            endpoint = f"https://{STORAGE_ACCOUNT}.table.core.windows.net"
+            credential = DefaultAzureCredential()
+            service = TableServiceClient(endpoint=endpoint, credential=credential)
+            table = service.get_table_client("users")
+
+            table.delete_entity(partition_key="users", row_key=username)
+            auth_helper.invalidate_user_cache()
+
+            logging.info(f"User deleted: {username}")
+            return JSONResponse({"status": "deleted"}, status_code=200)
+
+        except Exception as e:
+            logging.error(f"Failed to delete user: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    # --- RESET PASSWORD ---
+    if method == "PUT":
+        username = req.query_params.get("user", "").strip()
+        if not username:
+            return JSONResponse({"error": "?user= query param required"}, status_code=400)
+
+        try:
+            body = await req.json()
+        except Exception:
+            return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+        password = body.get("password", "")
+        if not password:
+            return JSONResponse({"error": "password is required"}, status_code=400)
+
+        password_hash = auth_helper.generate_password_hash(password)
+
+        try:
+            from azure.data.tables import TableServiceClient, UpdateMode
+            endpoint = f"https://{STORAGE_ACCOUNT}.table.core.windows.net"
+            credential = DefaultAzureCredential()
+            service = TableServiceClient(endpoint=endpoint, credential=credential)
+            table = service.get_table_client("users")
+
+            table.upsert_entity(
+                {"PartitionKey": "users", "RowKey": username, "password_hash": password_hash},
+                mode=UpdateMode.MERGE,
+            )
+            auth_helper.invalidate_user_cache()
+
+            logging.info(f"Password reset for user: {username}")
+            return JSONResponse({"status": "password_updated"}, status_code=200)
+
+        except Exception as e:
+            logging.error(f"Failed to reset password: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    return JSONResponse({"error": "Method not allowed"}, status_code=405)
