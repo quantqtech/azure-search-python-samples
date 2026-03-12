@@ -523,7 +523,8 @@ def transform_transcript_urls_to_youtube(text):
         youtube_url = f"https://www.youtube.com/watch?v={youtube_id}"
 
         if timestamp_str:
-            time_part = timestamp_str.split('-')[0]
+            # Normalize en-dash/em-dash to hyphen before splitting (agent uses both)
+            time_part = timestamp_str.replace('\u2013', '-').replace('\u2014', '-').split('-')[0]
             parts = time_part.split(':')
             if len(parts) == 2:
                 minutes, seconds = int(parts[0]), int(parts[1])
@@ -589,6 +590,100 @@ def extract_blob_urls_from_response(response):
     except Exception as e:
         logging.warning(f"extract_blob_urls failed: {e}")
     return url_lookup
+
+
+# Cache for SAS-signed URLs — avoids regenerating for the same blob within a request
+_sas_url_cache = {}
+_sas_cache_time = 0
+_SAS_CACHE_TTL = 3600  # 1 hour — SAS tokens are valid for 24h so this is safe
+
+
+def add_sas_to_blob_url(blob_url):
+    """Add a read-only SAS token to a blob URL so the browser can open it.
+
+    Uses user delegation SAS via managed identity (no storage account key needed).
+    Caches the delegation key for 1 hour to avoid repeated key requests.
+    Falls back to returning the original URL if SAS generation fails.
+    """
+    global _sas_url_cache, _sas_cache_time
+
+    if not blob_url or 'blob.core.windows.net' not in blob_url:
+        return blob_url
+
+    # Return cached SAS URL if available
+    now = time.time()
+    if now - _sas_cache_time < _SAS_CACHE_TTL and blob_url in _sas_url_cache:
+        return _sas_url_cache[blob_url]
+
+    try:
+        from urllib.parse import urlparse, unquote, quote
+        from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
+
+        parsed = urlparse(blob_url)
+        # e.g., host = stj6lw7vswhnnhw.blob.core.windows.net
+        account_name = parsed.hostname.split('.')[0]
+        # path = /container/path/to/file.pdf
+        path_parts = parsed.path.lstrip('/').split('/', 1)
+        if len(path_parts) != 2:
+            return blob_url
+        container_name, blob_name = path_parts[0], unquote(path_parts[1])
+
+        credential = DefaultAzureCredential()
+        blob_service = BlobServiceClient(
+            account_url=f"https://{account_name}.blob.core.windows.net",
+            credential=credential
+        )
+
+        # Get user delegation key (valid 24h)
+        start_time = datetime.now(timezone.utc) - timedelta(minutes=5)
+        expiry_time = datetime.now(timezone.utc) + timedelta(hours=24)
+        delegation_key = blob_service.get_user_delegation_key(start_time, expiry_time)
+
+        # Generate SAS with read permission + inline content disposition for PDFs
+        content_disposition = "inline" if blob_name.lower().endswith('.pdf') else None
+        sas_token = generate_blob_sas(
+            account_name=account_name,
+            container_name=container_name,
+            blob_name=blob_name,
+            user_delegation_key=delegation_key,
+            permission=BlobSasPermissions(read=True),
+            expiry=expiry_time,
+            start=start_time,
+            content_disposition=content_disposition,
+        )
+
+        sas_url = f"{blob_url}?{sas_token}"
+
+        # Cache for reuse
+        _sas_url_cache[blob_url] = sas_url
+        _sas_cache_time = now
+
+        return sas_url
+
+    except Exception as e:
+        logging.warning(f"SAS token generation failed for {blob_url}: {e}")
+        return blob_url
+
+
+def add_sas_to_all_blob_urls(text):
+    """Find all blob.core.windows.net URLs in text and add SAS tokens.
+
+    Runs as a final pass on response text after all citation processing.
+    Only modifies URLs that don't already have a query string (no double-SAS).
+    """
+    def replace_url(match):
+        url = match.group(0)
+        # Skip if already has query params (already SAS-signed)
+        if '?' in url:
+            return url
+        return add_sas_to_blob_url(url)
+
+    # Match blob storage URLs — stop at whitespace, quotes, closing parens/brackets
+    return re.sub(
+        r'https://\w+\.blob\.core\.windows\.net/[^\s"<>\)]+',
+        replace_url,
+        text
+    )
 
 
 def clean_search_service_urls(text):
@@ -1252,6 +1347,7 @@ async def chat(req: Request) -> JSONResponse:
         response_text = convert_single_bracket_citations(response_text)
         response_text = fallback_link_citations(response_text, response)
         response_text = transform_transcript_urls_to_youtube(response_text)
+        response_text = add_sas_to_all_blob_urls(response_text)  # SAS tokens for browser access
         logging.info(f"Timings: {timings}")
 
         # Extract structured metadata from the processed response
@@ -1427,6 +1523,7 @@ async def chat_stream(req: Request) -> StreamingResponse:
                     full_text = convert_single_bracket_citations(full_text)
                     full_text = fallback_link_citations(full_text, event.response)
                     full_text = transform_transcript_urls_to_youtube(full_text)
+                    full_text = add_sas_to_all_blob_urls(full_text)  # SAS tokens for browser access
                     elapsed_ms = round((time.time() - t_start) * 1000)
                     trace = extract_reasoning_trace(event.response)
                     trace["timings"] = {"total": elapsed_ms}
@@ -1495,6 +1592,7 @@ async def chat_stream(req: Request) -> StreamingResponse:
             if full_text and not completed:
                 full_text = re.sub(r'【\d+:\d+†\w+】', '', full_text)  # strip markers, no response object available
                 full_text = transform_transcript_urls_to_youtube(full_text)
+                full_text = add_sas_to_all_blob_urls(full_text)
                 yield f"data: {json.dumps({'type': 'done', 'full_text': full_text, 'trace': {}})}\n\n"
 
         except Exception as e:
