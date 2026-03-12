@@ -692,23 +692,12 @@
             font-style: italic;
         }
 
-        /* Initials input in header */
-        .initials-input {
-            width: 60px;
-            padding: 0.4rem 0.5rem;
-            border: 2px solid rgba(255,255,255,0.3);
-            border-radius: 6px;
-            background: var(--gent-blue-dark);
+        /* User display name in header */
+        .user-display-name {
+            font-size: var(--font-small);
             color: white;
-            font-size: var(--font-small);
-            text-align: center;
-            text-transform: uppercase;
-        }
-        .initials-input::placeholder { color: rgba(255,255,255,0.6); }
-        .initials-input:focus { outline: none; border-color: var(--gent-orange); }
-        .initials-label {
-            font-size: var(--font-small);
-            opacity: 0.85;
+            opacity: 0.9;
+            font-weight: 500;
         }
     </style>
 </head>
@@ -722,12 +711,7 @@
             </div>
         </div>
         <div class="header-right">
-            <div class="reasoning-toggle">
-                <span class="initials-label">Your initials:</span>
-                <input type="text" id="user-initials" class="initials-input"
-                       placeholder="e.g. DL" maxlength="4"
-                       title="Enter your initials to track your feedback">
-            </div>
+            <span id="user-display-name" class="user-display-name"></span>
             <div class="powered-by">
                 Powered by <img src="images/Aidan-Logo_White.png" alt="Aidan"> <span>aidan</span> systems
             </div>
@@ -798,7 +782,6 @@
         const clearBtn = document.getElementById('clear-btn');
         const REASONING_LEVEL = 'direct'; // always use unified index direct search — no mode selector
         const sidebarEl = document.getElementById('sidebar');
-        const initialsInput = document.getElementById('user-initials');
 
         const API_BASE = 'https://func-davenport-api.azurewebsites.net/api';
 
@@ -806,6 +789,23 @@
         if (!sessionStorage.getItem('auth_token')) {
             window.location.replace('login.html');
         }
+
+        // Decode JWT payload to get display_name, role, etc. (no verification — server validates)
+        function getTokenClaims() {
+            const token = sessionStorage.getItem('auth_token');
+            if (!token) return {};
+            try {
+                const payload = token.split('.')[1];
+                return JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
+            } catch { return {}; }
+        }
+
+        const claims = getTokenClaims();
+        const userDisplayName = claims.display_name || claims.sub || 'User';
+        const userRole = claims.role || 'user';
+
+        // Show logged-in user's display name in header
+        document.getElementById('user-display-name').textContent = userDisplayName;
 
         // Auth header helper — include on every API call
         function authHeaders() {
@@ -833,13 +833,6 @@
 
         // Message history for feedback submission: [{message, response, reasoning_level, turn_id, turn_number}]
         let messageHistory = [];
-
-        // Restore initials from localStorage (persists across sessions)
-        initialsInput.value = localStorage.getItem('davenport_initials') || '';
-        initialsInput.addEventListener('change', () => {
-            localStorage.setItem('davenport_initials', initialsInput.value.toUpperCase());
-            initialsInput.value = initialsInput.value.toUpperCase();
-        });
 
         // Active voice recorder (if recording)
         let activeRecorder = null;
@@ -994,7 +987,7 @@
                         onclick="toggleVoiceMemo(${msgIndex})" title="Record voice note">&#127908;</button>
                     <input type="text" class="feedback-initials" id="fb-init-${msgIndex}"
                         placeholder="Initials" maxlength="4"
-                        value="${initialsInput.value}"
+                        value="${userDisplayName}"
                         title="Your initials (optional)">
                     <span class="feedback-saved-msg" id="fb-saved-${msgIndex}" style="display:none"></span>
                 </div>
@@ -1014,7 +1007,7 @@
             const msg = messageHistory[msgIndex];
             if (!msg) return;
             const initials = document.getElementById(`fb-init-${msgIndex}`)?.value
-                || initialsInput.value;
+                || userDisplayName;
 
             fetch(`${API_BASE}/feedback`, {
                 method: 'POST',
@@ -1058,7 +1051,7 @@
             if (!msg) return;
             const notes = document.getElementById(`flag-text-${msgIndex}`)?.value || '';
             const initials = document.getElementById(`fb-init-${msgIndex}`)?.value
-                || initialsInput.value;
+                || userDisplayName;
 
             fetch(`${API_BASE}/feedback`, {
                 method: 'POST',
@@ -1103,7 +1096,7 @@
                     const blob = new Blob(chunks, { type: 'audio/webm' });
                     const params = new URLSearchParams({
                         conversation_id: conversationId || '',
-                        initials: initialsInput.value
+                        initials: userDisplayName
                     });
                     try {
                         await fetch(`${API_BASE}/voice-memo?${params}`, {
@@ -1178,7 +1171,7 @@
                 const streamResp = await fetch(`${API_BASE}/chat/stream`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-                    body: JSON.stringify({ message, conversation_id: conversationId, reasoning_level: reasoningLevel, initials: initialsInput.value.trim(), turn_number: turnNumber, recent_messages: recentMessages })
+                    body: JSON.stringify({ message, conversation_id: conversationId, reasoning_level: reasoningLevel, turn_number: turnNumber, recent_messages: recentMessages })
                 });
 
                 if (handleAuthError(streamResp)) return;
@@ -1241,7 +1234,7 @@
                     const resp = await fetch(`${API_BASE}/chat`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-                        body: JSON.stringify({ message, conversation_id: conversationId, reasoning_level: reasoningLevel, initials: initialsInput.value.trim(), turn_number: turnNumber, recent_messages: recentMessages })
+                        body: JSON.stringify({ message, conversation_id: conversationId, reasoning_level: reasoningLevel, turn_number: turnNumber, recent_messages: recentMessages })
                     });
 
                     if (handleAuthError(resp)) return;

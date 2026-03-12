@@ -1146,13 +1146,19 @@ async def login(req: Request) -> JSONResponse:
     if not username or not password:
         return JSONResponse({"error": "Username and password required"}, status_code=400)
 
-    if not auth_helper.authenticate_user(username, password):
+    user = auth_helper.authenticate_user(username, password)
+    if not user:
         logging.warning(f"Failed login attempt for user: {username}")
         return JSONResponse({"error": "Invalid username or password"}, status_code=401)
 
-    token = auth_helper.create_token(username)
-    logging.info(f"Successful login for user: {username}")
-    return JSONResponse({"token": token, "expires_in": auth_helper.TOKEN_EXPIRY_SECONDS})
+    token = auth_helper.create_token(user["username"], user["display_name"], user["role"])
+    logging.info(f"Successful login for user: {username} ({user['display_name']})")
+    return JSONResponse({
+        "token": token,
+        "display_name": user["display_name"],
+        "role": user["role"],
+        "expires_in": auth_helper.TOKEN_EXPIRY_SECONDS,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -1164,10 +1170,11 @@ async def chat(req: Request) -> JSONResponse:
     """Handle chat requests (non-streaming fallback)."""
     logging.info('Chat function processing request')
 
-    # Auth check
-    auth_error = auth_helper.require_auth(req)
-    if auth_error:
-        return auth_error
+    # Auth check — returns JWT payload dict on success, JSONResponse on failure
+    auth_result = auth_helper.require_auth(req)
+    if isinstance(auth_result, JSONResponse):
+        return auth_result
+    display_name = auth_result.get("display_name", auth_result.get("sub", ""))
 
     try:
         req_body = await req.json()
@@ -1177,7 +1184,6 @@ async def chat(req: Request) -> JSONResponse:
     message = req_body.get('message')
     conversation_id = req_body.get('conversation_id')
     reasoning_level = req_body.get('reasoning_level', 'thorough')
-    initials = req_body.get('initials', '')
 
     if not message:
         return JSONResponse({"error": "Message is required"}, status_code=400)
@@ -1263,12 +1269,16 @@ async def chat(req: Request) -> JSONResponse:
             "turn_id": turn_id,
             "turn_number": turn_number,
             "is_first_turn": turn_number == 1,
-            "initials": initials,
+            "initials": display_name,  # server-authoritative identity from JWT
             "message": message[:4000],
             "response": response_text[:4000],
             "agent": agent_name,
             "reasoning_level": reasoning_level,
             "duration_ms": timings["total"],
+            "timing_search_ms": timings.get("graph_context", 0),  # includes search + graph
+            "timing_agent_ms": timings.get("agent_response", 0),
+            "timing_graph_ms": timings.get("graph_context", 0),
+            "timing_citations_ms": timings.get("total", 0) - timings.get("agent_response", 0) - timings.get("graph_context", 0) - timings.get("client_init", 0) - timings.get("conversation_create", 0),
             "sources_cited": sources,
             "categories_tagged": categories,
             "source_count": len(sources),
@@ -1330,10 +1340,11 @@ async def chat_stream(req: Request) -> StreamingResponse:
     response.completed event depending on whether the Foundry agent passes through
     token-level events. The generator handles both cases gracefully.
     """
-    # Auth check
-    auth_error = auth_helper.require_auth(req)
-    if auth_error:
-        return auth_error
+    # Auth check — returns JWT payload dict on success, JSONResponse on failure
+    auth_result = auth_helper.require_auth(req)
+    if isinstance(auth_result, JSONResponse):
+        return auth_result
+    display_name = auth_result.get("display_name", auth_result.get("sub", ""))
 
     try:
         body = await req.json()
@@ -1343,7 +1354,6 @@ async def chat_stream(req: Request) -> StreamingResponse:
     message = body.get("message")
     conversation_id = body.get("conversation_id")
     reasoning_level = body.get("reasoning_level", "thorough")
-    initials = body.get("initials", "")
     turn_number = body.get("turn_number", 1)
 
     if not message:
@@ -1437,7 +1447,7 @@ async def chat_stream(req: Request) -> StreamingResponse:
                     yield f"data: {json.dumps({'type': 'done', 'full_text': full_text, 'turn_id': turn_id, 'trace': trace})}\n\n"
                     completed = True
 
-                    # Log to data lake after yielding (message/agent_name/initials captured from outer scope)
+                    # Log to data lake after yielding (display_name captured from JWT in outer scope)
                     log_to_lake("conversations", {
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                         "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
@@ -1445,12 +1455,16 @@ async def chat_stream(req: Request) -> StreamingResponse:
                         "turn_id": turn_id,
                         "turn_number": turn_number,
                         "is_first_turn": turn_number == 1,
-                        "initials": initials,
+                        "initials": display_name,  # server-authoritative identity from JWT
                         "message": message[:4000],
                         "response": full_text[:4000],
                         "agent": agent_name,
                         "reasoning_level": reasoning_level,
                         "duration_ms": elapsed_ms,
+                        "timing_agent_ms": elapsed_ms,  # streaming only tracks total time
+                        "timing_search_ms": 0,
+                        "timing_graph_ms": 0,
+                        "timing_citations_ms": 0,
                         "sources_cited": sources,
                         "categories_tagged": categories,
                         "source_count": len(sources),
@@ -1496,36 +1510,48 @@ async def chat_stream(req: Request) -> StreamingResponse:
 
 @app.route(route="feedback", methods=["POST"])
 async def submit_feedback(req: Request) -> JSONResponse:
-    """Save user feedback (thumbs up/down/flag) for a response."""
-    # Auth check
-    auth_error = auth_helper.require_auth(req)
-    if auth_error:
-        return auth_error
+    """Save user feedback (thumbs up/down/flag) for a response.
+
+    Upserts by turn_id — re-rating or adding notes to the same turn
+    updates the existing row instead of creating a duplicate.
+    """
+    # Auth check — returns JWT payload dict on success
+    auth_result = auth_helper.require_auth(req)
+    if isinstance(auth_result, JSONResponse):
+        return auth_result
+    display_name = auth_result.get("display_name", auth_result.get("sub", ""))
 
     try:
         body = await req.json()
     except Exception:
         return JSONResponse({"error": "Invalid JSON"}, status_code=400)
 
+    turn_id = body.get("turn_id", "")
+    if not turn_id:
+        return JSONResponse({"error": "turn_id is required"}, status_code=400)
+
     now = datetime.now(timezone.utc)
     entity = {
         "PartitionKey": now.strftime("%Y-%m-%d"),
-        "RowKey": f"{now.strftime('%Y%m%dT%H%M%S')}_{uuid.uuid4().hex[:6]}",
+        "RowKey": turn_id,  # upsert key — one feedback row per turn
         "conversation_id": body.get("conversation_id", ""),
-        "turn_id": body.get("turn_id", ""),
+        "turn_id": turn_id,
         "turn_number": body.get("turn_number", 0),
         "message": body.get("message", "")[:32000],
         "response": body.get("response", "")[:32000],
         "rating": body.get("rating", ""),
         "notes": body.get("notes", "")[:4000],
-        "initials": body.get("initials", ""),
+        "initials": body.get("initials", ""),  # who typed the comment (shop floor identity)
+        "username": display_name,  # who is logged in (JWT identity)
         "reasoning_level": body.get("reasoning_level", ""),
     }
 
     try:
         table = get_table_client()
-        table.create_entity(entity)
-        logging.info(f"Feedback saved: {entity['rating']} from {entity['initials'] or 'anonymous'}")
+        # Upsert (merge) — updates existing fields, preserves any not in this request
+        from azure.data.tables import UpdateMode
+        table.upsert_entity(entity, mode=UpdateMode.MERGE)
+        logging.info(f"Feedback saved: {entity['rating']} from {display_name} (initials: {entity['initials'] or 'none'})")
 
         # Also log to data lake for Power BI analytics (fire-and-forget)
         log_to_lake("feedback", {
@@ -1537,7 +1563,8 @@ async def submit_feedback(req: Request) -> JSONResponse:
             "message": body.get("message", "")[:4000],
             "response": body.get("response", "")[:4000],
             "rating": entity["rating"],
-            "initials": entity["initials"],
+            "initials": entity["initials"],  # shop floor identity
+            "username": display_name,  # JWT identity
             "notes": entity["notes"],
             "reasoning_level": entity["reasoning_level"],
         })
@@ -1554,10 +1581,10 @@ async def get_feedback(req: Request) -> JSONResponse:
 
     Optional query params: ?rating=flagged&date=2026-02-25
     """
-    # Auth check
-    auth_error = auth_helper.require_auth(req)
-    if auth_error:
-        return auth_error
+    # Auth check — returns JWT payload dict on success
+    auth_result = auth_helper.require_auth(req)
+    if isinstance(auth_result, JSONResponse):
+        return auth_result
 
     rating_filter = req.query_params.get("rating")
     date_filter = req.query_params.get("date")
@@ -1603,15 +1630,16 @@ async def voice_memo(req: Request) -> JSONResponse:
     Expects raw audio bytes in the request body.
     Query params: conversation_id, initials
     """
-    # Auth check
-    auth_error = auth_helper.require_auth(req)
-    if auth_error:
-        return auth_error
+    # Auth check — returns JWT payload dict on success
+    auth_result = auth_helper.require_auth(req)
+    if isinstance(auth_result, JSONResponse):
+        return auth_result
+    display_name = auth_result.get("display_name", auth_result.get("sub", ""))
 
     try:
         audio_data = await req.body()
         conv_id = req.query_params.get("conversation_id", "")
-        initials = req.query_params.get("initials", "")
+        initials = req.query_params.get("initials", "") or display_name
 
         if not audio_data:
             return JSONResponse({"error": "No audio data in request body"}, status_code=400)
