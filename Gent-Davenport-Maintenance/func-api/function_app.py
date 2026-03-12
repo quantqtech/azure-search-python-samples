@@ -1371,7 +1371,7 @@ async def chat(req: Request) -> JSONResponse:
             "agent": agent_name,
             "reasoning_level": reasoning_level,
             "duration_ms": timings["total"],
-            "timing_search_ms": timings.get("graph_context", 0),  # includes search + graph
+            "timing_search_ms": 0,  # search happens inside Foundry agent — not separately measurable
             "timing_agent_ms": timings.get("agent_response", 0),
             "timing_graph_ms": timings.get("graph_context", 0),
             "timing_citations_ms": timings.get("total", 0) - timings.get("agent_response", 0) - timings.get("graph_context", 0) - timings.get("client_init", 0) - timings.get("conversation_create", 0),
@@ -1472,11 +1472,13 @@ async def chat_stream(req: Request) -> StreamingResponse:
         conversation_id = conversation.id
 
     # V3 Graph RAG: two-layer context (before streaming starts)
+    t_graph_start = time.time()
     recent_messages = body.get("recent_messages", [])
     # Layer 1: World model — only on turn 1 (Foundry conversation retains it for later turns)
     world_model = get_world_model() if turn_number <= 1 else ""
     # Layer 2: Generic traversal → agent context + sidebar viz (one call, both outputs)
     graph_context, graph_viz, graph_ids, traversal_log = get_graph_context_for_message(message, recent_messages=recent_messages)
+    graph_ms = round((time.time() - t_graph_start) * 1000)
     # Assemble agent input with available context
     parts = []
     if world_model:
@@ -1519,6 +1521,7 @@ async def chat_stream(req: Request) -> StreamingResponse:
                     if not full_text:
                         full_text = getattr(event.response, "output_text", "")
                     # Citation pipeline: markers → fix broken → strip search URLs → fill empty → inline → embedded → fallback (Name) → YouTube
+                    t_cite_start = time.time()
                     full_text = process_citations(event.response, full_text)
                     full_text = fix_broken_markdown_links(full_text)
                     full_text = clean_search_service_urls(full_text)
@@ -1531,9 +1534,12 @@ async def chat_stream(req: Request) -> StreamingResponse:
                     full_text = fallback_link_citations(full_text, event.response)
                     full_text = transform_transcript_urls_to_youtube(full_text)
                     full_text = add_sas_to_all_blob_urls(full_text)  # SAS tokens for browser access
+                    citations_ms = round((time.time() - t_cite_start) * 1000)
                     elapsed_ms = round((time.time() - t_start) * 1000)
+                    # Total wall time includes graph + agent + citations
+                    total_ms = graph_ms + elapsed_ms
                     trace = extract_reasoning_trace(event.response)
-                    trace["timings"] = {"total": elapsed_ms}
+                    trace["timings"] = {"total": total_ms, "graph_context": graph_ms, "agent_response": elapsed_ms, "citations": citations_ms}
                     trace["graph_starting_ids"] = graph_ids or []
                     trace["graph_context_used"] = graph_active
                     trace["graph_layer2_chars"] = len(graph_context) if graph_context else 0
@@ -1564,11 +1570,11 @@ async def chat_stream(req: Request) -> StreamingResponse:
                         "response": full_text[:4000],
                         "agent": agent_name,
                         "reasoning_level": reasoning_level,
-                        "duration_ms": elapsed_ms,
-                        "timing_agent_ms": elapsed_ms,  # streaming only tracks total time
-                        "timing_search_ms": 0,
-                        "timing_graph_ms": 0,
-                        "timing_citations_ms": 0,
+                        "duration_ms": total_ms,
+                        "timing_agent_ms": elapsed_ms,  # agent call (includes Foundry-side search + LLM)
+                        "timing_search_ms": 0,  # search happens inside Foundry agent — not separately measurable
+                        "timing_graph_ms": graph_ms,  # graph context lookup (world model + traversal)
+                        "timing_citations_ms": citations_ms,
                         "sources_cited": sources,
                         "categories_tagged": categories,
                         "source_count": len(sources),
@@ -1827,9 +1833,9 @@ async def analytics_summary(req: Request) -> JSONResponse:
                 "date": date_str,
                 "turn_count": 0,
                 "avg_duration_sec": 0,
-                "avg_search_sec": 0,
                 "avg_agent_sec": 0,
                 "avg_graph_sec": 0,
+                "avg_citations_sec": 0,
                 "unique_conversations": 0,
                 "unique_users": 0,
             }
@@ -1844,9 +1850,9 @@ async def analytics_summary(req: Request) -> JSONResponse:
                     continue
 
                 total_duration = 0
-                total_search = 0
                 total_agent = 0
                 total_graph = 0
+                total_citations = 0
                 total_input_tokens = 0
                 total_output_tokens = 0
                 total_graph_context_chars = 0
@@ -1858,9 +1864,9 @@ async def analytics_summary(req: Request) -> JSONResponse:
                     try:
                         record = json.loads(line)
                         total_duration += record.get("duration_ms", 0)
-                        total_search += record.get("timing_search_ms", 0)
                         total_agent += record.get("timing_agent_ms", 0)
                         total_graph += record.get("timing_graph_ms", 0)
+                        total_citations += record.get("timing_citations_ms", 0)
                         total_input_tokens += record.get("input_tokens", 0)
                         total_output_tokens += record.get("output_tokens", 0)
                         total_graph_context_chars += record.get("graph_context_chars", 0)
@@ -1875,9 +1881,9 @@ async def analytics_summary(req: Request) -> JSONResponse:
                 count = len(lines)
                 day_record["turn_count"] = count
                 day_record["avg_duration_sec"] = round(total_duration / count / 1000, 1) if count else 0
-                day_record["avg_search_sec"] = round(total_search / count / 1000, 1) if count else 0
                 day_record["avg_agent_sec"] = round(total_agent / count / 1000, 1) if count else 0
                 day_record["avg_graph_sec"] = round(total_graph / count / 1000, 1) if count else 0
+                day_record["avg_citations_sec"] = round(total_citations / count / 1000, 1) if count else 0
                 day_record["unique_conversations"] = len(conversation_ids)
                 day_record["unique_users"] = len(users)
                 day_record["avg_input_tokens"] = round(total_input_tokens / count) if count else 0
