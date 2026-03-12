@@ -205,14 +205,95 @@
 
         a { color: var(--gent-orange); }
         a:hover { color: var(--gent-blue); }
+
+        /* User management section */
+        .section-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--gent-blue);
+            margin: 1.5rem 0 1rem 0;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid var(--gent-orange);
+        }
+        .users-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+        }
+        .users-table th {
+            text-align: left;
+            padding: 0.75rem 1rem;
+            background: #f8f8f8;
+            border-bottom: 2px solid var(--border-light);
+            font-size: 13px;
+            color: #555;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .users-table td {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid #eee;
+            font-size: 15px;
+        }
+        .users-table tr:hover td { background: #f8f9fa; }
+        .role-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .role-admin { background: var(--gent-orange-light); color: #7a5000; }
+        .role-user { background: #e8f5e9; color: #2e7d32; }
+        .small-btn {
+            padding: 0.3rem 0.75rem;
+            border: 1px solid var(--border-light);
+            border-radius: 4px;
+            font-size: 13px;
+            cursor: pointer;
+            background: white;
+            margin-right: 0.4rem;
+        }
+        .small-btn:hover { border-color: var(--gent-blue); background: var(--aidan-light-green); }
+        .small-btn.danger:hover { border-color: #c00; background: #ffe0e0; }
+        .add-user-form {
+            display: none;
+            background: white;
+            padding: 1.25rem;
+            border-radius: 10px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+            margin-top: 1rem;
+        }
+        .add-user-form.visible { display: block; }
+        .form-row {
+            display: flex;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+            align-items: flex-end;
+            margin-bottom: 0.75rem;
+        }
+        .form-row label { font-size: 13px; color: #555; display: block; margin-bottom: 4px; }
+        .form-row input, .form-row select {
+            padding: 0.5rem 0.75rem;
+            border: 2px solid var(--border-light);
+            border-radius: 6px;
+            font-size: 14px;
+            min-height: 38px;
+        }
+        .form-row input:focus, .form-row select:focus { outline: none; border-color: var(--gent-orange); }
+        .user-display-name { font-size: 13px; color: white; opacity: 0.9; }
     </style>
 </head>
 <body>
     <header>
         <div>
-            <h1>&#128203; Feedback Review</h1>
-            <div class="subtitle">Davenport Support — Admin Panel</div>
+            <h1>&#128203; Admin Panel</h1>
+            <div class="subtitle">Davenport Support — Feedback &amp; Users</div>
         </div>
+        <span id="user-display-name" class="user-display-name"></span>
         <a href="index.html">&#8592; Back to Chat</a>
         <button onclick="signOut()" style="padding:0.4rem 0.9rem;background:transparent;color:white;border:2px solid rgba(255,255,255,0.4);border-radius:6px;font-size:13px;cursor:pointer;">Sign Out</button>
     </header>
@@ -237,6 +318,28 @@
     <div class="stats-bar" id="stats-bar" style="display:none"></div>
 
     <div class="content">
+        <!-- User Management -->
+        <div class="section-title">User Management</div>
+        <table class="users-table" id="users-table">
+            <thead><tr><th>Username</th><th>Display Name</th><th>Role</th><th>Actions</th></tr></thead>
+            <tbody id="users-tbody"><tr><td colspan="4" style="text-align:center;color:#888">Loading...</td></tr></tbody>
+        </table>
+        <button class="load-btn" style="margin-top:0.75rem" onclick="toggleAddForm()">+ Add User</button>
+        <div class="add-user-form" id="add-user-form">
+            <div class="form-row">
+                <div><label for="new-username">Username</label><input id="new-username" placeholder="e.g. dmiller"></div>
+                <div><label for="new-display">Display Name</label><input id="new-display" placeholder="e.g. Dave M."></div>
+                <div><label for="new-password">Password</label><input id="new-password" type="password" placeholder="Temporary password"></div>
+                <div><label for="new-role">Role</label>
+                    <select id="new-role"><option value="user">User</option><option value="admin">Admin</option></select>
+                </div>
+                <button class="load-btn" onclick="createUser()">Create</button>
+            </div>
+            <div id="add-user-msg" style="font-size:13px;margin-top:0.5rem"></div>
+        </div>
+
+        <!-- Feedback Review -->
+        <div class="section-title" style="margin-top:2rem">Feedback Review</div>
         <div id="feedback-list">
             <div class="empty-state">Select filters above and click Load to see feedback.</div>
         </div>
@@ -249,6 +352,20 @@
         if (!sessionStorage.getItem('auth_token')) {
             window.location.replace('login.html');
         }
+
+        // Decode JWT payload client-side (no verification — server validates)
+        function getTokenClaims() {
+            const token = sessionStorage.getItem('auth_token');
+            if (!token) return {};
+            try {
+                const payload = token.split('.')[1];
+                return JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
+            } catch { return {}; }
+        }
+
+        const claims = getTokenClaims();
+        const userDisplayName = claims.display_name || claims.sub || 'User';
+        document.getElementById('user-display-name').textContent = userDisplayName;
 
         function authHeaders() {
             return { 'Authorization': 'Bearer ' + (sessionStorage.getItem('auth_token') || '') };
@@ -266,6 +383,122 @@
         function signOut() {
             sessionStorage.removeItem('auth_token');
             window.location.replace('login.html');
+        }
+
+        // ---- User Management ----
+        async function loadUsers() {
+            try {
+                const resp = await fetch(API_BASE + '/manage-users', { headers: authHeaders() });
+                if (handleAuthError(resp)) return;
+                const users = await resp.json();
+                const tbody = document.getElementById('users-tbody');
+                if (!Array.isArray(users) || users.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#888">No users found</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = users.map(u => {
+                    const roleClass = u.role === 'admin' ? 'role-admin' : 'role-user';
+                    const isSelf = u.username === claims.sub;
+                    return '<tr>' +
+                        '<td><strong>' + escHtml(u.username) + '</strong>' + (isSelf ? ' (you)' : '') + '</td>' +
+                        '<td>' + escHtml(u.display_name) + '</td>' +
+                        '<td><span class="role-badge ' + roleClass + '">' + u.role + '</span></td>' +
+                        '<td>' +
+                        '<button class="small-btn" onclick="resetPassword(\'' + escHtml(u.username) + '\')">Reset PW</button>' +
+                        (isSelf ? '' : '<button class="small-btn danger" onclick="deleteUser(\'' + escHtml(u.username) + '\')">Delete</button>') +
+                        '</td></tr>';
+                }).join('');
+            } catch (err) {
+                document.getElementById('users-tbody').innerHTML =
+                    '<tr><td colspan="4" style="color:#c00">Failed to load users: ' + err.message + '</td></tr>';
+            }
+        }
+
+        function toggleAddForm() {
+            document.getElementById('add-user-form').classList.toggle('visible');
+            document.getElementById('add-user-msg').textContent = '';
+        }
+
+        async function createUser() {
+            const msgEl = document.getElementById('add-user-msg');
+            const username = document.getElementById('new-username').value.trim();
+            const display_name = document.getElementById('new-display').value.trim();
+            const password = document.getElementById('new-password').value;
+            const role = document.getElementById('new-role').value;
+
+            if (!username || !password) {
+                msgEl.textContent = 'Username and password are required.';
+                msgEl.style.color = '#c00';
+                return;
+            }
+
+            msgEl.textContent = 'Creating...';
+            msgEl.style.color = '#555';
+
+            try {
+                const resp = await fetch(API_BASE + '/manage-users', {
+                    method: 'POST',
+                    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, display_name, password, role })
+                });
+                if (handleAuthError(resp)) return;
+                const data = await resp.json();
+
+                if (resp.ok) {
+                    msgEl.textContent = 'User ' + username + ' created!';
+                    msgEl.style.color = '#2e7d32';
+                    document.getElementById('new-username').value = '';
+                    document.getElementById('new-display').value = '';
+                    document.getElementById('new-password').value = '';
+                    loadUsers(); // refresh table
+                } else {
+                    msgEl.textContent = data.error || 'Failed to create user';
+                    msgEl.style.color = '#c00';
+                }
+            } catch (err) {
+                msgEl.textContent = 'Error: ' + err.message;
+                msgEl.style.color = '#c00';
+            }
+        }
+
+        async function deleteUser(username) {
+            if (!confirm('Delete user "' + username + '"? This cannot be undone.')) return;
+            try {
+                const resp = await fetch(API_BASE + '/manage-users?user=' + encodeURIComponent(username), {
+                    method: 'DELETE',
+                    headers: authHeaders()
+                });
+                if (handleAuthError(resp)) return;
+                if (resp.ok) {
+                    loadUsers();
+                } else {
+                    const data = await resp.json();
+                    alert(data.error || 'Failed to delete user');
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        async function resetPassword(username) {
+            const newPw = prompt('Enter new password for ' + username + ':');
+            if (!newPw) return;
+            try {
+                const resp = await fetch(API_BASE + '/manage-users?user=' + encodeURIComponent(username), {
+                    method: 'PUT',
+                    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: newPw })
+                });
+                if (handleAuthError(resp)) return;
+                if (resp.ok) {
+                    alert('Password updated for ' + username);
+                } else {
+                    const data = await resp.json();
+                    alert(data.error || 'Failed to reset password');
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
         }
 
         // Set today's date as default
@@ -381,6 +614,7 @@
         }
 
         // Auto-load on page open
+        loadUsers();
         loadFeedback();
     </script>
 </body>

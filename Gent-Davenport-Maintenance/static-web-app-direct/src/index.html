@@ -146,6 +146,143 @@
         }
         .sign-out-btn:hover { background: var(--gent-blue-dark); }
 
+        /* Analytics tab button — admin only */
+        .analytics-btn {
+            padding: 0.4rem 0.9rem;
+            background: var(--gent-orange);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            display: none; /* shown via JS for admins */
+        }
+        .analytics-btn:hover { background: #e06b1a; }
+        .analytics-btn.active { background: #c05a12; box-shadow: inset 0 2px 4px rgba(0,0,0,0.2); }
+
+        /* Analytics view — hidden by default */
+        .analytics-view {
+            display: none;
+            flex: 1;
+            padding: 1.5rem;
+            overflow-y: auto;
+            max-width: 1200px;
+            margin: 0 auto;
+            width: 100%;
+        }
+        .analytics-view.visible { display: block; }
+
+        .analytics-summary-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+        .analytics-card {
+            background: white;
+            border-radius: 10px;
+            padding: 1.2rem;
+            text-align: center;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+        }
+        .analytics-card .card-value {
+            font-size: 2.2rem;
+            font-weight: 700;
+            color: var(--gent-blue);
+        }
+        .analytics-card .card-label {
+            font-size: var(--font-small);
+            color: var(--text-secondary);
+            margin-top: 0.3rem;
+        }
+
+        .analytics-chart-container {
+            background: white;
+            border-radius: 10px;
+            padding: 1.5rem;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+            margin-bottom: 1.5rem;
+        }
+        .analytics-chart-container h3 {
+            margin-bottom: 1rem;
+            color: var(--text-primary);
+            font-size: var(--font-medium);
+        }
+
+        .bar-chart {
+            display: flex;
+            align-items: flex-end;
+            gap: 3px;
+            height: 200px;
+            border-bottom: 2px solid var(--border-light);
+            padding-bottom: 4px;
+        }
+        .bar-chart .bar-group {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            height: 100%;
+            justify-content: flex-end;
+            position: relative;
+        }
+        .bar-chart .bar {
+            width: 100%;
+            max-width: 28px;
+            background: var(--gent-orange);
+            border-radius: 3px 3px 0 0;
+            min-height: 2px;
+            transition: opacity 0.2s;
+            cursor: pointer;
+        }
+        .bar-chart .bar:hover { opacity: 0.8; }
+        .bar-chart .bar-label {
+            font-size: 9px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            transform: rotate(180deg);
+            max-height: 50px;
+            overflow: hidden;
+        }
+        .bar-tooltip {
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--gent-blue);
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            white-space: nowrap;
+            display: none;
+            z-index: 10;
+        }
+        .bar-group:hover .bar-tooltip { display: block; }
+
+        /* Performance breakdown table */
+        .perf-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: var(--font-small);
+        }
+        .perf-table th {
+            text-align: left;
+            padding: 0.5rem;
+            border-bottom: 2px solid var(--border-light);
+            color: var(--text-secondary);
+            font-weight: 600;
+        }
+        .perf-table td {
+            padding: 0.5rem;
+            border-bottom: 1px solid #eee;
+        }
+        .perf-table tr:hover { background: #f8f8f8; }
+
         .container {
             flex: 1;
             display: flex;
@@ -712,6 +849,7 @@
         </div>
         <div class="header-right">
             <span id="user-display-name" class="user-display-name"></span>
+            <button id="analytics-btn" class="analytics-btn" onclick="toggleAnalytics()">Analytics</button>
             <div class="powered-by">
                 Powered by <img src="images/Aidan-Logo_White.png" alt="Aidan"> <span>aidan</span> systems
             </div>
@@ -719,7 +857,28 @@
         </div>
     </header>
 
-    <div class="container">
+    <!-- Analytics view — admin only, toggled via header button -->
+    <div id="analytics-view" class="analytics-view">
+        <div class="analytics-summary-cards" id="analytics-cards">
+            <div class="analytics-card"><div class="card-value" id="stat-turns">--</div><div class="card-label">Total Turns (30d)</div></div>
+            <div class="analytics-card"><div class="card-value" id="stat-duration">--</div><div class="card-label">Avg Response Time</div></div>
+            <div class="analytics-card"><div class="card-value" id="stat-convos">--</div><div class="card-label">Conversations</div></div>
+            <div class="analytics-card"><div class="card-value" id="stat-days">--</div><div class="card-label">Active Days</div></div>
+        </div>
+        <div class="analytics-chart-container">
+            <h3>Turns per Day (Last 30 Days)</h3>
+            <div class="bar-chart" id="turns-chart"></div>
+        </div>
+        <div class="analytics-chart-container">
+            <h3>Performance Breakdown — Active Days</h3>
+            <table class="perf-table" id="perf-table">
+                <thead><tr><th>Date</th><th>Turns</th><th>Avg Total</th><th>Avg Agent</th><th>Avg Search</th><th>Avg Graph</th><th>Users</th></tr></thead>
+                <tbody id="perf-table-body"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="container" id="chat-view">
         <div class="chat-container">
             <div class="messages" id="messages">
                 <div class="message assistant">
@@ -807,6 +966,11 @@
         // Show logged-in user's display name in header
         document.getElementById('user-display-name').textContent = userDisplayName;
 
+        // Show analytics button for admins
+        if (userRole === 'admin') {
+            document.getElementById('analytics-btn').style.display = 'inline-block';
+        }
+
         // Auth header helper — include on every API call
         function authHeaders() {
             return { 'Authorization': 'Bearer ' + (sessionStorage.getItem('auth_token') || '') };
@@ -825,6 +989,82 @@
         function signOut() {
             sessionStorage.removeItem('auth_token');
             window.location.replace('login.html');
+        }
+
+        // ---- Analytics tab ----
+        let analyticsData = null; // cache to avoid re-fetching on tab switches
+        let analyticsVisible = false;
+
+        function toggleAnalytics() {
+            analyticsVisible = !analyticsVisible;
+            const chatView = document.getElementById('chat-view');
+            const analyticsView = document.getElementById('analytics-view');
+            const btn = document.getElementById('analytics-btn');
+
+            if (analyticsVisible) {
+                chatView.style.display = 'none';
+                analyticsView.classList.add('visible');
+                btn.classList.add('active');
+                btn.textContent = 'Back to Chat';
+                if (!analyticsData) loadAnalytics();
+            } else {
+                chatView.style.display = '';
+                analyticsView.classList.remove('visible');
+                btn.classList.remove('active');
+                btn.textContent = 'Analytics';
+            }
+        }
+
+        async function loadAnalytics() {
+            try {
+                const resp = await fetch(API_BASE + '/analytics/summary', { headers: authHeaders() });
+                if (handleAuthError(resp)) return;
+                if (!resp.ok) throw new Error('API error ' + resp.status);
+                analyticsData = await resp.json();
+                renderAnalytics(analyticsData);
+            } catch (err) {
+                document.getElementById('analytics-view').innerHTML =
+                    '<p style="color:red;padding:2rem;">Failed to load analytics: ' + err.message + '</p>';
+            }
+        }
+
+        function renderAnalytics(data) {
+            const totals = data.totals || {};
+            document.getElementById('stat-turns').textContent = totals.turn_count || 0;
+            document.getElementById('stat-duration').textContent = (totals.avg_duration_sec || 0) + 's';
+            document.getElementById('stat-convos').textContent = totals.unique_conversations || 0;
+            document.getElementById('stat-days').textContent = (totals.active_days || 0) + '/30';
+
+            // Bar chart — turns per day
+            const chart = document.getElementById('turns-chart');
+            const days = data.days || [];
+            const maxTurns = Math.max(1, ...days.map(d => d.turn_count));
+
+            chart.innerHTML = days.map(d => {
+                const pct = (d.turn_count / maxTurns) * 100;
+                const label = d.date.slice(5); // MM-DD
+                const tip = d.date + ': ' + d.turn_count + ' turns, avg ' + d.avg_duration_sec + 's';
+                const barStyle = d.turn_count === 0
+                    ? 'background:#ddd;height:2px'
+                    : 'height:' + pct + '%';
+                return '<div class="bar-group">' +
+                    '<div class="bar-tooltip">' + tip + '</div>' +
+                    '<div class="bar" style="' + barStyle + '"></div>' +
+                    '<div class="bar-label">' + label + '</div>' +
+                    '</div>';
+            }).join('');
+
+            // Performance table — only days with data, newest first
+            const tbody = document.getElementById('perf-table-body');
+            const activeDays = days.filter(d => d.turn_count > 0).reverse();
+            tbody.innerHTML = activeDays.map(d =>
+                '<tr><td>' + d.date + '</td><td>' + d.turn_count + '</td>' +
+                '<td>' + d.avg_duration_sec + 's</td>' +
+                '<td>' + d.avg_agent_sec + 's</td>' +
+                '<td>' + d.avg_search_sec + 's</td>' +
+                '<td>' + d.avg_graph_sec + 's</td>' +
+                '<td>' + (d.unique_users || '-') + '</td></tr>'
+            ).join('');
         }
 
         // Conversation state
