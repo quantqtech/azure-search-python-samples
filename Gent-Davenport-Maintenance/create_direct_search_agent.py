@@ -36,8 +36,10 @@ SEARCH_CONNECTION = (
 )
 
 # One tool, one index — the whole point of building davenport-kb-unified
-# top=8: enough for a solid 5-bullet answer without drowning the LLM in 6000+ tokens
-# v4 returned 6870 tokens and took 24.8s on that step alone — reducing top cuts that directly
+# top=10: balance between answer quality and speed.
+# 20 chunks returned ~13,000 tokens → 28-48s post-search LLM call.
+# 10 should halve that context and cut response time significantly.
+# v4 returned 6870 tokens at top=8 and took 24.8s — watch analytics to tune.
 SEARCH_TOOLS = [
     {
         "type": "azure_ai_search",
@@ -47,7 +49,7 @@ SEARCH_TOOLS = [
                     "project_connection_id": SEARCH_CONNECTION,
                     "index_name": "davenport-kb-unified",
                     "query_type": "simple",  # BM25 — fast, no vector overhead
-                    "top": 20                # top param doesn't appear to limit chunks; leaving at 20 as documented intent
+                    "top": 10                # reduced from 20 to cut post-search LLM time
                 }
             ]
         }

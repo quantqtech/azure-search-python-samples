@@ -1384,6 +1384,13 @@ async def chat(req: Request) -> JSONResponse:
             "graph_context_provided": graph_active,
             "graph_node_count": traversal_log["node_count"] if traversal_log else 0,
             "graph_edge_count": traversal_log["edge_count"] if traversal_log else 0,
+            # Performance visibility — token and context sizes
+            "agent_input_chars": len(agent_input),
+            "graph_context_chars": len(graph_context) if graph_context else 0,
+            "world_model_chars": len(world_model) if world_model else 0,
+            "input_tokens": trace.get("tokens", {}).get("input", 0),
+            "output_tokens": trace.get("tokens", {}).get("output", 0),
+            "total_tokens": trace.get("tokens", {}).get("total", 0),
         })
 
         # Log graph traversal details to separate flat files (developer analysis)
@@ -1571,6 +1578,13 @@ async def chat_stream(req: Request) -> StreamingResponse:
                         "graph_context_provided": graph_active,
                         "graph_node_count": traversal_log["node_count"] if traversal_log else 0,
                         "graph_edge_count": traversal_log["edge_count"] if traversal_log else 0,
+                        # Performance visibility — token and context sizes
+                        "agent_input_chars": len(agent_input),
+                        "graph_context_chars": len(graph_context) if graph_context else 0,
+                        "world_model_chars": len(world_model) if world_model else 0,
+                        "input_tokens": trace.get("tokens", {}).get("input", 0),
+                        "output_tokens": trace.get("tokens", {}).get("output", 0),
+                        "total_tokens": trace.get("tokens", {}).get("total", 0),
                     })
 
                     # Log graph traversal details to separate flat files (developer analysis)
@@ -1833,6 +1847,10 @@ async def analytics_summary(req: Request) -> JSONResponse:
                 total_search = 0
                 total_agent = 0
                 total_graph = 0
+                total_input_tokens = 0
+                total_output_tokens = 0
+                total_graph_context_chars = 0
+                total_agent_input_chars = 0
                 conversation_ids = set()
                 users = set()
 
@@ -1843,6 +1861,10 @@ async def analytics_summary(req: Request) -> JSONResponse:
                         total_search += record.get("timing_search_ms", 0)
                         total_agent += record.get("timing_agent_ms", 0)
                         total_graph += record.get("timing_graph_ms", 0)
+                        total_input_tokens += record.get("input_tokens", 0)
+                        total_output_tokens += record.get("output_tokens", 0)
+                        total_graph_context_chars += record.get("graph_context_chars", 0)
+                        total_agent_input_chars += record.get("agent_input_chars", 0)
                         if record.get("conversation_id"):
                             conversation_ids.add(record["conversation_id"])
                         if record.get("initials"):
@@ -1858,6 +1880,10 @@ async def analytics_summary(req: Request) -> JSONResponse:
                 day_record["avg_graph_sec"] = round(total_graph / count / 1000, 1) if count else 0
                 day_record["unique_conversations"] = len(conversation_ids)
                 day_record["unique_users"] = len(users)
+                day_record["avg_input_tokens"] = round(total_input_tokens / count) if count else 0
+                day_record["avg_output_tokens"] = round(total_output_tokens / count) if count else 0
+                day_record["avg_graph_context_chars"] = round(total_graph_context_chars / count) if count else 0
+                day_record["avg_agent_input_chars"] = round(total_agent_input_chars / count) if count else 0
 
             except Exception:
                 pass  # Blob doesn't exist for this day — zeros

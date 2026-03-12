@@ -872,7 +872,7 @@
         <div class="analytics-chart-container">
             <h3>Performance Breakdown — Active Days</h3>
             <table class="perf-table" id="perf-table">
-                <thead><tr><th>Date</th><th>Turns</th><th>Avg Total</th><th>Avg Agent</th><th>Avg Search</th><th>Avg Graph</th><th>Users</th></tr></thead>
+                <thead><tr><th>Date</th><th>Turns</th><th>Avg Total</th><th>Avg Agent</th><th>Avg Search</th><th>Avg Graph</th><th>In Tok</th><th>Out Tok</th><th>Users</th></tr></thead>
                 <tbody id="perf-table-body"></tbody>
             </table>
         </div>
@@ -1063,6 +1063,8 @@
                 '<td>' + d.avg_agent_sec + 's</td>' +
                 '<td>' + d.avg_search_sec + 's</td>' +
                 '<td>' + d.avg_graph_sec + 's</td>' +
+                '<td>' + (d.avg_input_tokens || '-') + '</td>' +
+                '<td>' + (d.avg_output_tokens || '-') + '</td>' +
                 '<td>' + (d.unique_users || '-') + '</td></tr>'
             ).join('');
         }
