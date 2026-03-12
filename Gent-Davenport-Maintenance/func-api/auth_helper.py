@@ -28,6 +28,40 @@ _user_cache = None
 _user_cache_time = 0
 _USER_CACHE_TTL = 300  # 5 minutes
 
+# Rate limiting for login — 5 failures per username in 5 min triggers 60s cooldown
+_login_failures = {}  # {username: [timestamp, timestamp, ...]}
+_MAX_FAILURES = 5
+_FAILURE_WINDOW = 300  # 5 minutes
+_COOLDOWN = 60  # seconds
+
+
+def check_rate_limit(username):
+    """Returns True if the user is rate-limited (too many failed login attempts)."""
+    now = time.time()
+    attempts = _login_failures.get(username, [])
+    # Prune old attempts outside the window
+    attempts = [t for t in attempts if now - t < _FAILURE_WINDOW]
+    _login_failures[username] = attempts
+
+    if len(attempts) >= _MAX_FAILURES:
+        # Check if last failure was within cooldown period
+        if now - attempts[-1] < _COOLDOWN:
+            return True
+    return False
+
+
+def record_login_failure(username):
+    """Record a failed login attempt for rate limiting."""
+    now = time.time()
+    if username not in _login_failures:
+        _login_failures[username] = []
+    _login_failures[username].append(now)
+
+
+def clear_login_failures(username):
+    """Clear failure history after a successful login."""
+    _login_failures.pop(username, None)
+
 
 def _get_users_from_table():
     """Load all users from the `users` Azure Table Storage table.

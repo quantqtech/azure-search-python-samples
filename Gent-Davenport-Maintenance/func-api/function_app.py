@@ -24,8 +24,8 @@ import auth_helper
 # Pipeline version — increment on each deploy to verify code is live
 PIPELINE_VERSION = "2026-03-01-v11-context-logging"
 
-# Storage config for video links
-STORAGE_ACCOUNT = "stj6lw7vswhnnhw"
+# Storage config — env var with fallback to current deployment value
+STORAGE_ACCOUNT = os.environ.get("STORAGE_ACCOUNT", "stj6lw7vswhnnhw")
 TRANSCRIPT_CONTAINER = "video-training"
 
 # YouTube video mapping: transcript filename (without .md) -> YouTube video ID
@@ -42,8 +42,8 @@ YOUTUBE_VIDEO_MAP = {
     "Davenport Machine Model B - Preventive Maintenance": "RIxzlj3ANTY",
 }
 
-# Configuration
-PROJECT_ENDPOINT = "https://aoai-j6lw7vswhnnhw.services.ai.azure.com/api/projects/proj-j6lw7vswhnnhw"
+# Foundry project endpoint — env var with fallback to current deployment value
+PROJECT_ENDPOINT = os.environ.get("PROJECT_ENDPOINT", "https://aoai-j6lw7vswhnnhw.services.ai.azure.com/api/projects/proj-j6lw7vswhnnhw")
 
 # Agent routing by reasoning level
 AGENTS = {
@@ -148,7 +148,7 @@ def get_direct_openai_client():
         credential = DefaultAzureCredential()
         token = credential.get_token("https://cognitiveservices.azure.com/.default")
         _direct_openai_client = AzureOpenAI(
-            azure_endpoint="https://aoai-j6lw7vswhnnhw.openai.azure.com",
+            azure_endpoint=os.environ.get("AOAI_ENDPOINT", "https://aoai-j6lw7vswhnnhw.openai.azure.com"),
             api_version="2024-10-21",
             azure_ad_token=token.token,
         )
@@ -201,7 +201,7 @@ def summarize_conversation(message_history):
         )
 
         result = client.chat.completions.create(
-            model="gpt-5-mini",
+            model="gpt-5-mini",  # needs intelligence to distill conversation context well
             messages=[
                 {"role": "system", "content": (
                     "Summarize this Davenport screw machine support conversation in 2-3 sentences. "
@@ -278,7 +278,7 @@ def classify_graph_nodes(message, recent_messages=None):
 
     try:
         resp = get_direct_openai_client().chat.completions.create(
-            model="gpt-5-mini",
+            model="gpt-5-mini",  # 570-vertex prompt too heavy for nano — mini is faster here
             messages=[
                 {"role": "system", "content": (
                     "You identify which graph vertices are most relevant to a Davenport Model B "
@@ -1283,17 +1283,24 @@ async def login(req: Request) -> JSONResponse:
     except Exception:
         return JSONResponse({"error": "Invalid JSON"}, status_code=400)
 
-    username = body.get("username", "")
+    username = body.get("username", "").strip().lower()
     password = body.get("password", "")
 
     if not username or not password:
         return JSONResponse({"error": "Username and password required"}, status_code=400)
 
+    # Fix #4: Brute force protection — 5 failures in 5 min triggers 60s cooldown
+    if auth_helper.check_rate_limit(username):
+        logging.warning(f"Rate-limited login attempt for user: {username}")
+        return JSONResponse({"error": "Too many failed attempts, try again later"}, status_code=429)
+
     user = auth_helper.authenticate_user(username, password)
     if not user:
+        auth_helper.record_login_failure(username)
         logging.warning(f"Failed login attempt for user: {username}")
         return JSONResponse({"error": "Invalid username or password"}, status_code=401)
 
+    auth_helper.clear_login_failures(username)
     token = auth_helper.create_token(user["username"], user["display_name"], user["role"])
     logging.info(f"Successful login for user: {username} ({user['display_name']})")
     return JSONResponse({
@@ -1470,7 +1477,7 @@ async def chat(req: Request) -> JSONResponse:
 
     except Exception as e:
         logging.error(f"Error processing chat: {str(e)}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
 # ---------------------------------------------------------------------------
@@ -1761,7 +1768,7 @@ async def submit_feedback(req: Request) -> JSONResponse:
         return JSONResponse({"status": "saved"}, status_code=201)
     except Exception as e:
         logging.error(f"Failed to save feedback: {str(e)}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Failed to save feedback"}, status_code=500)
 
 
 @app.route(route="feedback", methods=["GET"])
@@ -1770,13 +1777,20 @@ async def get_feedback(req: Request) -> JSONResponse:
 
     Optional query params: ?rating=flagged&date=2026-02-25
     """
-    # Auth check — returns JWT payload dict on success
-    auth_result = auth_helper.require_auth(req)
+    # Fix #3: Admin-only — feedback contains all user conversations
+    auth_result = auth_helper.require_admin(req)
     if isinstance(auth_result, JSONResponse):
         return auth_result
 
     rating_filter = req.query_params.get("rating")
     date_filter = req.query_params.get("date")
+
+    # Fix #2: Validate inputs to prevent OData injection
+    valid_ratings = {"thumbs_up", "thumbs_down", "flagged"}
+    if rating_filter and rating_filter not in valid_ratings:
+        return JSONResponse({"error": "Invalid rating filter"}, status_code=400)
+    if date_filter and not re.match(r"^\d{4}-\d{2}-\d{2}$", date_filter):
+        return JSONResponse({"error": "Invalid date format, use YYYY-MM-DD"}, status_code=400)
 
     filters = []
     if date_filter:
@@ -1805,7 +1819,7 @@ async def get_feedback(req: Request) -> JSONResponse:
         return JSONResponse(results, status_code=200)
     except Exception as e:
         logging.error(f"Failed to get feedback: {str(e)}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Failed to retrieve feedback"}, status_code=500)
 
 
 # ---------------------------------------------------------------------------
@@ -1826,12 +1840,21 @@ async def voice_memo(req: Request) -> JSONResponse:
     display_name = auth_result.get("display_name", auth_result.get("sub", ""))
 
     try:
+        # Fix #6: Validate file size and content type before accepting
+        content_type = req.headers.get("content-type", "")
+        if content_type and not content_type.startswith("audio/"):
+            return JSONResponse({"error": "Invalid content type, expected audio/*"}, status_code=400)
+
         audio_data = await req.body()
         conv_id = req.query_params.get("conversation_id", "")
         initials = req.query_params.get("initials", "") or display_name
 
         if not audio_data:
             return JSONResponse({"error": "No audio data in request body"}, status_code=400)
+
+        # 10MB limit — voice memos should be short recordings
+        if len(audio_data) > 10_000_000:
+            return JSONResponse({"error": "File too large, 10MB maximum"}, status_code=413)
 
         now = datetime.now(timezone.utc)
         blob_name = (
@@ -1854,7 +1877,7 @@ async def voice_memo(req: Request) -> JSONResponse:
 
     except Exception as e:
         logging.error(f"Failed to save voice memo: {str(e)}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Failed to save voice memo"}, status_code=500)
 
 
 # ---------------------------------------------------------------------------
@@ -1992,7 +2015,7 @@ async def analytics_summary(req: Request) -> JSONResponse:
 
     except Exception as e:
         logging.error(f"Analytics summary failed: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Failed to generate analytics"}, status_code=500)
 
 
 # ---------------------------------------------------------------------------
@@ -2071,7 +2094,7 @@ async def admin_users(req: Request) -> JSONResponse:
 
         except Exception as e:
             logging.error(f"Failed to create user: {e}")
-            return JSONResponse({"error": str(e)}, status_code=500)
+            return JSONResponse({"error": "Failed to create user"}, status_code=500)
 
     # --- DELETE ---
     if method == "DELETE":
@@ -2097,7 +2120,7 @@ async def admin_users(req: Request) -> JSONResponse:
 
         except Exception as e:
             logging.error(f"Failed to delete user: {e}")
-            return JSONResponse({"error": str(e)}, status_code=500)
+            return JSONResponse({"error": "Failed to delete user"}, status_code=500)
 
     # --- RESET PASSWORD ---
     if method == "PUT":
@@ -2134,6 +2157,6 @@ async def admin_users(req: Request) -> JSONResponse:
 
         except Exception as e:
             logging.error(f"Failed to reset password: {e}")
-            return JSONResponse({"error": str(e)}, status_code=500)
+            return JSONResponse({"error": "Failed to reset password"}, status_code=500)
 
     return JSONResponse({"error": "Method not allowed"}, status_code=405)

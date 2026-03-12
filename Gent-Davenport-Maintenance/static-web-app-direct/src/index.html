@@ -162,6 +162,22 @@
         .analytics-btn:hover { background: #e06b1a; }
         .analytics-btn.active { background: #c05a12; box-shadow: inset 0 2px 4px rgba(0,0,0,0.2); }
 
+        /* Admin page button — admin only, same style as analytics */
+        .admin-btn {
+            padding: 0.4rem 0.9rem;
+            background: var(--gent-orange);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            display: none; /* shown via JS for admins */
+            text-decoration: none;
+        }
+        .admin-btn:hover { background: #e06b1a; }
+
         /* Analytics view — hidden by default */
         .analytics-view {
             display: none;
@@ -849,7 +865,10 @@
         </div>
         <div class="header-right">
             <span id="user-display-name" class="user-display-name"></span>
-            <button id="analytics-btn" class="analytics-btn" onclick="toggleAnalytics()">Analytics</button>
+            <div style="display:flex; gap:0.4rem;">
+                <button id="analytics-btn" class="analytics-btn" onclick="toggleAnalytics()">Analytics</button>
+                <a id="admin-btn" class="admin-btn" href="admin.html">Admin</a>
+            </div>
             <div class="powered-by">
                 Powered by <img src="images/Aidan-Logo_White.png" alt="Aidan"> <span>aidan</span> systems
             </div>
@@ -969,6 +988,7 @@
         // Show analytics button for admins
         if (userRole === 'admin') {
             document.getElementById('analytics-btn').style.display = 'inline-block';
+            document.getElementById('admin-btn').style.display = 'inline-block';
         }
 
         // Auth header helper — include on every API call
@@ -1108,7 +1128,18 @@
         // ---------------------------------------------------------------
         // Markdown formatting — shared between initial render and streaming
         // ---------------------------------------------------------------
+        // Escape HTML entities — prevents XSS from LLM responses injecting tags
+        function escapeHtml(str) {
+            return str.replace(/&/g, '&amp;')
+                      .replace(/</g, '&lt;')
+                      .replace(/>/g, '&gt;')
+                      .replace(/"/g, '&quot;')
+                      .replace(/'/g, '&#39;');
+        }
+
         function formatMarkdown(text) {
+            // Escape HTML FIRST — neutralizes any <script>, <img onerror=...>, etc.
+            text = escapeHtml(text);
             // Strip ALL 【...】 annotation markers — numeric (6:1†source) and text-based
             text = text.replace(/【[^】]*】/g, '');
             // Convert markdown links to HTML anchors FIRST
@@ -1476,7 +1507,7 @@
                                 // Dim graph nodes not mentioned in the response
                                 dimUnmentionedNodes(data.full_text);
                             } else if (data.type === 'error') {
-                                assistantDiv.innerHTML = `<strong>Error:</strong> ${data.text}`;
+                                assistantDiv.innerHTML = `<strong>Error:</strong> ${escapeHtml(data.text)}`;
                             }
                         }
                     }
