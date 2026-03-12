@@ -1410,10 +1410,18 @@
                 // Try streaming first; fall back to regular /chat if not available
                 // Last 3 user messages for classifier context on follow-up questions
                 const recentMessages = messageHistory.slice(-3).map(m => m.message);
+                const requestBody = { message, conversation_id: conversationId, reasoning_level: reasoningLevel, turn_number: turnNumber, recent_messages: recentMessages };
+                // When approaching turn limit, include message history for summary generation
+                if (turnNumber >= 5 && messageHistory.length > 0) {
+                    requestBody.message_history = messageHistory.map(m => ({
+                        message: m.message,
+                        response_summary: (m.response || '').slice(0, 300)  // truncated to save bandwidth
+                    }));
+                }
                 const streamResp = await fetch(`${API_BASE}/chat/stream`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-                    body: JSON.stringify({ message, conversation_id: conversationId, reasoning_level: reasoningLevel, turn_number: turnNumber, recent_messages: recentMessages })
+                    body: JSON.stringify(requestBody)
                 });
 
                 if (handleAuthError(streamResp)) return;
@@ -1440,6 +1448,11 @@
 
                             if (data.type === 'session') {
                                 conversationId = data.conversation_id;
+                                // Server reset conversation to bound token growth — reset local turn counter
+                                if (data.reset) {
+                                    turnNumber = data.turn_number || 1;
+                                    messageHistory = [];  // clear local history (summary is server-side now)
+                                }
                             } else if (data.type === 'status') {
                                 assistantDiv.innerHTML =
                                     `<div class="stream-status">${data.text}</div>` +

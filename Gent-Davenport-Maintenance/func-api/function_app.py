@@ -54,6 +54,11 @@ AGENTS = {
 }
 DEFAULT_AGENT = "davenport-direct-v1"
 
+# Conversation history management — reset after N turns to keep token count bounded.
+# At ~8k tokens/turn, 5 turns = ~40k input tokens. Reset creates a new Foundry
+# conversation with a summary of what was discussed, keeping context but dropping verbatim history.
+MAX_TURNS_BEFORE_RESET = 5
+
 # Create function app
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
@@ -172,6 +177,49 @@ def get_world_model():
         logging.warning(f"World model build failed (proceeding without): {e}")
         _world_model_cache = ""
     return _world_model_cache
+
+
+def summarize_conversation(message_history):
+    """Summarize conversation history into a compact context block.
+
+    Called when turn count exceeds MAX_TURNS_BEFORE_RESET. Uses a fast LLM call
+    to distill the conversation into ~150 tokens so the new Foundry conversation
+    starts with context but without the full verbatim history.
+
+    message_history: list of {message, response_summary} dicts from the frontend.
+    Returns a string like "CONVERSATION SUMMARY:\n..."
+    """
+    if not message_history:
+        return ""
+
+    try:
+        client = get_direct_openai_client()
+        # Build a compact transcript for the summarizer
+        transcript = "\n".join(
+            f"Q: {m['message']}\nA: {m.get('response_summary', '(no summary)')}"
+            for m in message_history
+        )
+
+        result = client.chat.completions.create(
+            model="gpt-5-mini",
+            messages=[
+                {"role": "system", "content": (
+                    "Summarize this Davenport screw machine support conversation in 2-3 sentences. "
+                    "Focus on: what problem the user has, what was diagnosed, what fixes were discussed. "
+                    "Be specific about machine components mentioned. Keep it under 100 words."
+                )},
+                {"role": "user", "content": transcript},
+            ],
+            max_tokens=200,
+        )
+        summary = result.choices[0].message.content.strip()
+        logging.info(f"Conversation summary: {len(summary)} chars")
+        return f"CONVERSATION SUMMARY (prior discussion):\n{summary}"
+    except Exception as e:
+        logging.warning(f"Summary generation failed: {e}")
+        # Fallback: just list the user's questions
+        questions = [m["message"] for m in message_history]
+        return f"CONVERSATION SUMMARY (prior questions): {'; '.join(questions)}"
 
 
 def classify_graph_nodes(message, recent_messages=None):
@@ -1324,6 +1372,7 @@ async def chat(req: Request) -> JSONResponse:
             tool_choice="required",
             input=agent_input,
             extra_body={"agent": {"name": agent_name, "type": "agent_reference"}},
+            truncation="auto",  # drop oldest messages when context grows too large
         )
         timings["agent_response"] = round((time.time() - t2) * 1000)
         timings["total"] = round((time.time() - t0) * 1000)
@@ -1467,6 +1516,21 @@ async def chat_stream(req: Request) -> StreamingResponse:
 
     _, openai_client = get_clients()
 
+    # Conversation history management: reset after MAX_TURNS to bound token growth.
+    # Summarize what was discussed, start fresh conversation with summary injected.
+    conversation_reset = False
+    if turn_number >= MAX_TURNS_BEFORE_RESET and conversation_id:
+        logging.info(f"Turn {turn_number} >= {MAX_TURNS_BEFORE_RESET}: resetting conversation with summary")
+        message_history = body.get("message_history", [])
+        conversation_summary = summarize_conversation(message_history)
+        # Start a fresh Foundry conversation
+        conversation = openai_client.conversations.create()
+        conversation_id = conversation.id
+        turn_number = 1  # reset counter
+        conversation_reset = True
+    else:
+        conversation_summary = ""
+
     if not conversation_id:
         conversation = openai_client.conversations.create()
         conversation_id = conversation.id
@@ -1474,13 +1538,15 @@ async def chat_stream(req: Request) -> StreamingResponse:
     # V3 Graph RAG: two-layer context (before streaming starts)
     t_graph_start = time.time()
     recent_messages = body.get("recent_messages", [])
-    # Layer 1: World model — only on turn 1 (Foundry conversation retains it for later turns)
-    world_model = get_world_model() if turn_number <= 1 else ""
+    # Layer 1: World model — on turn 1 OR after reset (new conversation needs machine context)
+    world_model = get_world_model() if (turn_number <= 1 or conversation_reset) else ""
     # Layer 2: Generic traversal → agent context + sidebar viz (one call, both outputs)
     graph_context, graph_viz, graph_ids, traversal_log = get_graph_context_for_message(message, recent_messages=recent_messages)
     graph_ms = round((time.time() - t_graph_start) * 1000)
     # Assemble agent input with available context
     parts = []
+    if conversation_summary:
+        parts.append(conversation_summary)
     if world_model:
         parts.append(world_model)
     if graph_context:
@@ -1491,7 +1557,11 @@ async def chat_stream(req: Request) -> StreamingResponse:
 
     async def event_generator():
         # Send conversation_id immediately so the frontend can persist it
-        yield f"data: {json.dumps({'type': 'session', 'conversation_id': conversation_id})}\n\n"
+        session_event = {'type': 'session', 'conversation_id': conversation_id}
+        if conversation_reset:
+            session_event['reset'] = True  # tell frontend to reset turn counter
+            session_event['turn_number'] = 1
+        yield f"data: {json.dumps(session_event)}\n\n"
         status_msg = "Analyzing machine knowledge..." if graph_active else "Searching knowledge base..."
         yield f"data: {json.dumps({'type': 'status', 'text': status_msg})}\n\n"
 
@@ -1582,6 +1652,7 @@ async def chat_stream(req: Request) -> StreamingResponse:
                         "graph_starting_ids": graph_ids or [],
                         "graph_starting_names": traversal_log["starting_names"] if traversal_log else [],
                         "graph_context_provided": graph_active,
+                        "conversation_reset": conversation_reset,
                         "graph_node_count": traversal_log["node_count"] if traversal_log else 0,
                         "graph_edge_count": traversal_log["edge_count"] if traversal_log else 0,
                         # Performance visibility — token and context sizes
