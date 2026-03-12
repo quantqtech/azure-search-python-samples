@@ -10,6 +10,7 @@ streaming is enabled (PYTHON_ENABLE_INIT_INDEXING=1 app setting required).
 
 import json
 import logging
+import os
 import re
 import time
 import uuid
