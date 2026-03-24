@@ -1,0 +1,322 @@
+Davenport Maintenance Agent Training-20260224_132542-Meeting Recording
+February 24, 2026, 6:25PM
+1h 7m 27s
+
+Quentin Fisher started transcription
+
+Quentin Fisher   0:15
+It'd be cool to be able to capture those things, 'cause, yeah, the guys who are here have the knowledge. Yeah, and but I think it's almost to be denser, right? I think you need, OK, let's just come up with identify a few topics for the week.
+For the week and and it's like, OK, let's do 1/2 hour call and just explain these things or you know what I mean? And almost like queue up a few few topics where you find weak spots, do the call, record the call, you know what I mean? OK and and that way you're gonna find problems.
+To your point, you got to use it to see where the gaps are, right? And then it's like, OK, where's weak spots? Here, here, here. OK, OK, so we have the expert Dave here and we're recording now.
+So.
+So I guess this was how do you adjust a circular sizing to a holder and we're we're kind of OK with this. Are there things that you think?
+You would add or or want to adjust here. Well that that first video we were watching. Is this a different one? The same thing? I think that's it.
+This one.
+The distance between the size tool and the size tool row determines the diameter of the workpiece.
+This is a different one that should be the 26 holder goes to the center of the workpiece tangentially rather than going into the workpiece on the center line. The spring loaded holder allows the tool to maintain an equal diameter between the tool and the roll.
+At all times by exerting roll pressure on the workpiece while the workpiece is being a machine.
+For the initial setting, use a part or material that is the correct size and adjust the roll so that the material just passes between the roll and the cutting edge of the tool.
+So, so is this an appropriate? It is like that's good. OK, OK, good, good. All right. Oh, it was at the end of that video. No, I well, it kept it. I don't know. It goes 448 to 505 that that was the and we went past that it it. Oh, it it picked the here. But the next clip goes beyond.
+Goes from 56 to something like 604. See. Yeah, it picked another snippet from 5552 to 607.
+You can go up there if you want to.
+As a form to or cut off to over this claimed.
+To regrind or replace the size tool, move the machine to half index 3:00 on the slot in a burning spindle opening and closing can.
+Loosen the tool clamp bowl and remove the clamp.
+Everyone just changed Google, right?
+Yeah. So it it, it's looking for that term sizing tool holder and it found it here, here and it's pulling back and then it's it's so part of it is the question is pretty broad. So it's just kind of throwing out a bunch of different answers. I think you would want to say like, yeah, tighten your question up.
+Yeah, maybe how to make the diameter smaller. OK, so you wanna ask that? So how specifically?
+The diameter.
+OK. And this is, this is gonna continue with our original question. You don't have to correct, correct. But but sizing tool again, I hope so, I hope so. But but like like I was saying earlier, we're always we're forcing a a search.
+Right, and it should be using the context of the of the discussion to build. So we can even like we could look at these queries here like on the previous one.
+On the previous one.
+It doesn't give us the details here.
+I thought it would.
+Um.
+I thought I was breaking down the queries a bit. I could see how it was it was. It was breaking the queries down into subsegments here a bit.
+Anyways.
+I have to look at. I can a lot of the questions that the guys are gonna have are gonna be beyond these simple questions, right? So it's like they know how to do this. The problem is most people are gonna be asking these sort of questions. Yeah, like we're gonna have to start to test it with some much more difficult questions. Well, I think that's what we want to be doing here. OK, Yeah.
+OK. So then like what are some questions that you've gotten this week or last week or two?
+Well, unfortunately, sometimes it comes with a picture of a part that's doesn't look right and I have to try to diagnose, right? So that's kind of hard to do here.
+Fix this part. Yeah, why does this part look like this?
+Right. Yeah, it's kind of a tough one. I mean, in theory that this someday should be able to. Oh, yeah, yeah, yeah, yeah, yeah, yeah. We make this thing smart enough. OK, OK. Is this, is this a good answer here, Dave?
+Yes.
+Yes.
+OK, that's it. OK, let's ask some hard questions, you know.
+About this or anything, anything.
+They haven't correlated though, right? The meaning of life is what? What's the meaning of life 42? Isn't that the?
+Say if if the overall length of the part is undersized or short.
+How do we fix that when there's a lot of different? Yeah, well, I'd be curious to see what it says.
+So it's gonna pull up the feet fingers. I would hope. I would hope. Yeah, and there's so many things.
+Yeah. And there's a whole, we kinda already went through. Yeah, I think we kinda did that one. And then there's a whole decision tree on on troubleshooting decision tree. And yeah, all that stuff. Yeah. The problem is when they're when they're getting, when they're calling you and it's this.
+Problem. It's that they've already done so many of the other things.
+Yeah, sometimes it's just um.
+Letting them know that they're doing it, what they're doing is right. Yeah. Sometimes it's like, well, I didn't know if I should do this or not, OK.
+Yeah, it's like, well, it's coming up with things. Are there?
+Like, I'm starting to think that, you know, like, are there certain concepts that we need to be like back to these tool holders? There's, there's, there's a, there's, there's a circular and a dog. It just comes down to the jargon. So, you know, we tried to kind of think of stuff, but then until you, yeah, kind of run across it.
+Thing is is that I feel like shape tool. I thought it's too many places call it shave tool, so it's.
+I think it was initially called a sizing tool, and I think they might have changed. I mean, they still might call it that. Yeah. I mean, when you're ordering parts for this, yeah.
+OK, here we go.
+Yeah, all these things are good. Would you add anything?
+Um, sure.
+Is this this the uh, this is the little spit out? Yeah, I would add um.
+Make sure there's no ring on the bar end left by the cutoff.
+You wanna ask that, Quinn? Say, hey, I've done all of these things. Uh.
+Does it make sense to check that and get like an objective answer? Yeah. If you said like I notice a ring. Yeah. But you would want them. You would want this to prompt you to say, do you see a ring on? Yeah, it's not. It's this will know about a ring. I don't know that's not going to be anywhere in the information. Well, that that's.
+The key, right? So what? What? What is it about a ring that means something? Well, if the cutoff is leaving a little ring on the bar end, it's gonna feed out onto that ring. That ring is gonna stop it short because it's not feeding out the full amount.
+It's hitting that ring. OK, so is that A and is that?
+So that's not in any of the documentation. No, that wouldn't be. And maybe that's a thread we can pull on. They may call it a step on a part, though. Maybe not a ring. Could be, could be. But I don't see where that would be. I might might be in the troubleshooting. I think you can see if it's in here. OK.
+What is this pulling like the top five results? Well, yeah, we told it not to get like, yeah, we wanted. We didn't want to give you an essay here. Let's see. Let's see what else is. Yeah. Yeah. OK, so we checked all those. Should I say I noticed a. Let's call it a step. Do we want to lead it to us?
+No, no. OK, like ask the questions like a machinist would not ask them in a way we're trying to validate the answer, right? Yeah, right. I think that's useful to test. I I would just say I tried all those things. It's still it's still short. Yeah, like I when I use chat bots, I use them a lot to reassure myself that what I'm doing.
+Make sense? And I don't think I ask many questions like, hey, uh, there's this problem going on. Like what are some ideas? It's like, oh, I have a couple of ideas how to fix it. Do these make sense? I should have spent my time investigating them.
+So what did what's your suggestion? Well, I don't know anything about the machine, but I'm saying like I would imagine you get phone calls. It goes like I've checked XY and Z here. This is sure problem. I don't really know where to go next, right? Or I think it could be in this direction. Does that make sense to spend 30 minutes to to do that?
+No, that's that's the way it usually goes. So I'll ask if there's any potential causes to see what it comes back with, OK. And then we'll see what it does. And then if not, we'll say, well, I know it's a bit of a step, yeah.
+And see what it comes back with and and but it it's maybe if there's kind of these these knowledge kind of Nuggets right like hey maybe it's troubleshooting things or or or.
+Um.
+So all so this whole page here is kind of everything, but I don't see anything about a step on it. It does. There is one thing that might be close.
+Well, if you resharpen the cut off, that might help, but um.
+Might just need to be turned in. You know, you got to get rid of that ring, right? Right. It's not going in far enough, right? But I mean, I wonder if that's.
+So, so can you describe this this ring or step again? What is it? Is it just something that's stopping the Yeah, let me make let me draw you a picture. It's like an artifact from the previous piece. Yeah, so when the cutoff goes in.
+This is the bar and this is the collet. This is what's sticking out.
+And the collet is collet holds the bar and everything else is machined on this end, so.
+Let's say the part looks like this.
+When the cutoff goes in and let's say there's a hole in there, this is a hole goes into the bar end.
+So when the cutoff goes in, it cuts it off here. If it doesn't go in deep enough, it leaves a little ring to the bar that would look like this.
+I see.
+And it's very fine. It might be only a few thousand thick or it could be thicker depending on if this is out of if your cut off is out of adjustment or if it's just not going deep enough. So then when the next when it feeds out, it feeds out against this and not this. So it's a part of short.
+Short, short, short. OK, 'cause it's hitting that instead of it. Got it, got it, got it. OK, what about this?
+Now facing tool's not really.
+That's on the opposite side.
+No, not the one. We don't want to get into the locating, but push me.
+What's this thrust ring? Yeah, none of those would actually. OK, OK, digging too deep. Yeah, OK. Why don't we ask and see if it even knows anything about you? What if you say I notice a a step on the end of my bar?
+Could that be causing an issue? It's that somewhere in the troubleshooting guide. Yeah, let's see if it's not, it's not gonna find. Yeah, I know. OK, so it's yeah, it's not those either. I noticed a step on the edge and.
+End of the bar or edge end end end of the bar.
+Could that be?
+Alright.
+Alright, it only just doesn't. If it agrees with us, then it hope that it points to a. It should it? No, absolutely. It will have a. It's only supposed to answer from the content. It's not. It's not gonna make everything. You notice every statement has a link, so it's only using your.
+Your documents, not when it's on the Internet, you know, right? Well, this this is where.
+You know, if if that question comes up, my part is feeding short. We want this to be one of the answers, one of the possibilities. Yeah, yeah, so.
+Yeah, so and that's nowhere in the documentation. I guess it's probably not. Yeah, yeah, probably not. So. So there's some stuff here that I haven't probably read. I don't remember like, you know, some of these.
+You got a picture of your diagram here.
+It's going pretty deep. It was. It went for a minute and a half last time, 89 seconds. And while this gets tested in the future, I think it makes sense just to add a text box in here that they could submit feedback in additional detail. Oh yeah, yeah, yeah, yeah, OK.
+OK, what's this? Oh.
+Oh.
+It's the asker to page 6. That's this. That's the page I was looking at. So let's go open it up. Yeah, but will it point to the exact one? That's page five. It's page 4.
+It's six. Is this your? Yeah, that's what I'm looking at right here.
+Are are the parts produced short?
+Other parts too long. I didn't see where.
+Yes.
+What is it referencing? Yeah, I don't see that on there.
+Yes, a step protruding bark can stop the collet from seeding and shorten the effective feed, which is exactly what you said, right? Pruding short parts step protruding bark can stop the collet from seeding.
+Maybe that's, yeah, correct. But it but it if you take that one thing out, a step protruding bar can shorten the effective feed, producing a short part, right? I don't know where it came up. Yeah, yeah, yeah, yeah, yeah, yeah.
+Turn the end of the bar manually. The other the other thing too here is I'm not using the best model, I'm using a GPT 5 mini.
+Right, not a GPT5. Um.
+Chat and that broader intelligence might mean something, you know? Sure.
+The second one could be true too. You know, it's basically saying that's more like a nib, right?
+I'm trying to figure out where it's getting that on here.
+I guess to zoom out and talk about the session so far, it feels like the underlying problem isn't necessarily. It has no idea what you guys are talking about, but that it will confidently tell you something that isn't particularly true. You have to kind of parse that down.
+Right. No, I think that's a good idea to have a.
+Somewhere where we where we could put in notes that it would learn, you know, as it goes, yeah, so you could say, listen, you need to be thinking about this and that could be just saved and then we could load that up as knowledge.
+So what are we saying here that we didn't? It just kind of didn't find anything specifically, but kind of maybe.
+Interpreted the words in a way that could you have like, you know, yeah, that I mean stop the college from ceiling. Like why did it say that? Like it's something, it's different language.
+That's the confusing part, right? Yeah, I think that makes the. OK, OK, right. So I get.
+I mean that protruding bar end can stop this collar from seeding. So can shorten can.
+I get this.
+Oh ****.
+Uh.
+OK, well, I screwed up there. I should have, yeah, said. But I don't. I don't understand where you got this other thing from, right? So, so we'll we'll see where.
+We'll see if it expands on that a bit, right? And then if not, I'll ask it. Another problem is these take a minute and a half every time now.
+And what what these other two came up with earlier. We're we're good. Yeah, suggestions. It's just, you know, we need to add some. So just so, so this is kind of like, you know, this is an example of something like we need a.
+Not an FAQ, but a frequent, frequent. Like these are things that aren't in there that and how do I document that I guess is a question, right? These guys aren't gonna want to write stuff down on the floor. Meaning if they're asking a question, they're not gonna want to take the time to be like, OK, I didn't know it, so I'm gonna record that.
+That.
+No. And if it didn't, and if it didn't come up with the correct answer, they're not going to know what the answer is or other things to try. That's why they're there. Does this, does this. I I said something that didn't really make sense. I get. I was going to say I get this, but but I don't understand why.
+Why the collet from seating is working then it came back with.
+Does this make any sense?
+We already had that one already, yeah.
+Yeah, that's like on a um.
+On a part that we're making without a hole going all the way through it. I have a, I have a burr, something sticking off because it didn't cut off.
+Yeah.
+Which is that's a legit. Yeah, I mean that's that's one one answer to a problem.
+Unless it has a.
+Hole going all the way through it and then.
+Are these just other reasons how that could happen? Is that what they're saying here? Well, that.
+That actually tells you how to fix that if there's a.
+If if you're in, if you don't have a hole going all the way through and it would leave a burr and that that tells you how to fix that, which is good.
+They can cut it. Basically, we have 10. If it there's ten things to try, it has nine of them. Yeah, you know, like, yeah, basically just stuck on this one. But I think that that's.
+It's going to be a nine out of 10 thing. You know what I mean? It's not going to be a 10 out of 10 thing. And the reason I say that is because these things are, they say they're probabilistic. It's not, it's not an if this, then that it, right? It's so I think what we're saying is OK.
+How do we then help it learn so that yeah, we can add that to the data? Yeah, you're saying just put a text box and that's fine. If we can type that answer and that's probably the simplest thing. Or maybe, maybe even.
+Type in it saying or maybe we could just while you're in here say questions for Dave or or have interview interview topics for Dave or something like that, right. You know what what are 'cause it may you may not want to type it. Here's the but maybe you say hey.
+We need to build out this improvement areas or something, you know, that way you don't have to sit there typing that that that right. You can just right, right. Almost take a note, right. If they went through all these things and nothing works. Yeah, yeah, they can just say none of these works. Yeah, like or improvement notes or like it might not be.
+'Cause I don't think you wanna be adding in the content. OK, you know what I mean? Cause that takes you so much time, right? You just wanna say, hey, here's a almost like what do you do? The thumbs up, thumbs down or improvement areas or something? Yeah, the RLHF type stuff, but.
+The problems that like this isn't in and be the documents, right? That's the issue. Yeah, right. And the nine out of 10 thing we're talking about right now, that isn't a probabilistic problem. It's that the 10 thing isn't in there. You're right. You're right. You're right. Yeah. Yeah. In this scenario. Yeah. Yeah. Other times, you know, we're saying it needs to be some.
+Something that gets checked. What Quentin's saying though is like if he asks the same question twice and you get 10 things listed, you're not guaranteed to get the same exact 10 things because it's rescanning if you ask the question slightly different even.
+Or even if you ask the same exact way, put it in all cap, you might do something different. Yeah, in grabbing 10 things, I think that's what he's trying to. Yeah, it's not gonna be 100% the same every time. That's the nature of these tools, right? You know?
+But this is back to having lists of saying high prior or high frequency, low frequency. Always check these things first 'cause they happen all the time versus those right that that could be very useful stuff. So I guess.
+Yeah.
+It's just that there's, you know, in that list of 10 things, there should be 11. Yeah, there should be another thing in there. Is that something that's now? I'm not saying common, but it happens. You know, it's something you always, we always check.
+That isn't in there. Yeah, but it's not in. Yeah, I think the type of questions we ask matter a lot. Like that's why I was trying to drive you guys away from the list 10 things questions, because maybe you ask it now and it doesn't show it to you, but you ask it.
+Immediately afterward a new session, it does show you. I don't think we're really learning that much versus asking a specific question about one of the 10 and it's saying yes, no, here's why. Like I think optimizing for the 1st and on the 2nd is different from optimizing for the 2nd and not the.
+You're getting getting to an answer, right? Yeah. Versus listing all the this. This thing should help you get to the answer. So maybe another thought here is, is there a kind of a a problem that you've seen that's not super easy, but.
+That we you've you've solved and then we could say, OK, this was the answer and then kind of like we're doing no, no, not that, not that or you know, like how how you go through a troubleshooting exercise with your guy on the floor, you know?
+Right, right. Well, that's.
+That's gonna come up on almost every.
+Question that you ask it's there's gonna be little things that um.
+Like like this. That should this should be added to the to the answer for short parts. Yeah, yeah, off hand. I'm not thinking of any others, but there's are you are you asking to come up with another? Well, just yeah, if there's a problem that you had with the guy.
+Based on the floor that you kind of talk through right as I'm just trying to think what was a recent something over the past you know couple months or something like that that or before you took off, you know that that was kind of we have a lot of issues with the cutoff.
+Yeah, getting a nice finish, no burr. And there's a lot of.
+Let's ask, you know what? How do you get a clean cut off with no Burr? I mean, I don't know if that's the right way to ask it. This would be for a part without a hole going through it, so it needs to be a nice smooth cut off. I have a part.
+With no hole and obviously Sam was having trouble with that. How do I get a nice clean cut off finish finish?
+But no. And what answer do you want to hear? Well, I want to see what it.
+Well, there's so many different, right. There's a lot of things variables. Yeah. So you're wanting to come up. Yeah. So, so, so, so, so yeah. But let's this. I want to see that and to say that yes or no. Yeah. Yeah. So, so this, this problem that this guy had, what kind of, you know, was it recent? Just make up.
+Situation. Well, like he, I mean, you know they ended up the the tool was made for a 332nd wide and so they they had a 16th wide cutoff in it or or a 564th I think it was. Oh, it was a 564. Yeah. And they changed to 330 seconds and now the step is.
+Gone. Yeah, but I don't think it was because the tools were made for 330 seconds. We shouldn't really need a 330 second. I don't know why I got off. I told me that I was shocked. But why would that be causing them to have a burr or a white mark or any of those things? It would. It would have to be the.
+The cut off they had in there was bending a little bit because it was there was too much room you think because it was the gap that could have something to do with it. OK, but we've certainly run it before. OK, tool set too shallow. Advanced the cut off tool. OK, that's that's good.
+This is.
+I can pull this up page 69. I can get it right here so you guys can see on that.
+Oh, this is a whole big thing here. And do you think these types of questions, Quentin, lend themselves to an ontology? Well, that's what I was trying to think through. You know, like my one thought is with an ontology is that, you know, this is connected to this, this is connected to this, connected to this, right? And is that useful in these questions? I don't think so.
+Right. I I I unless, unless we know that this only connects to this, like do we need to build almost like a what if I have a? I'm thinking like there's categories of issues, yeah, that relate to certain things and the general question might not be enough, yeah, to navigate to a certain thing.
+So, so maybe that's the thought, right? Is there? And that might be good to get Dave, right? Like like the when you're solving a back to this ontology, right? Because what an ontology's gonna do is is just have logical groupings and they call them classes, which is just.
+You know these things and kind of a kind of a class of things and kind of group things and then say this is kind of connected to this and but this is not connected to this, right. It's connected to these things, right. So, so I guess a question there is in your.
+You know, are there some natural because we just threw all this stuff in there. You know what I mean? Yeah. And is there some natural groupings that make sense, right? Because then we can say grouping of of answers, answers, documents.
+Problems. You know, I I I guess the the idea that an ontology is like they're saying like say you like beer, wine and it's like, well, there's there's lagers and then there's, you know, and there's stouts and there's, you know, and instead of just having all the beer in one big, well, we have all the beer now in one big.
+Thing. But now you can have kind of different, you know, groupings of it. You know, a stellar is quite different from a logger, quite different from a. So you want to be more specific. Well, well, no, I'm just thinking, is there a framework that we should be attaching?
+To all the all the words. All the words are just in one big soup right now, and it's a scanning through the soup looking for similar words that we're saying, right? And is there a skeleton that we should be building?
+To stay.
+This stuff is over here. That stuff's over there. When when you like, you know you don't look at everything when you're solving a problem, right? Right. You know, like I'm thinking you have like a part category, long part, short part. Short parts refer to these general things to the machine. Long parts refer to these general things. Here's the overlap.
+In different categories like that. So it's not just, oh, we have a problem, let's look for the whole universe of possible solutions. But we have this problem. Hey, it's usually one of these 20 things. Let's look at those 20 things specifically.
+But you can make up any kind of categories you want, which is super broad, right? Right. Right. But maybe it's not that simple. So these answers are all good answers. There's just a lot more. Yeah. Yeah. And and are there more answers somewhere in here behind it? Sure, sure.
+Telling it to be succinct. Yeah. And to be not give everything. We're saying keep that. We're we're telling it to be tight so that we don't drown because you saw the initial responses. It was like 3 pages long, right? So that that wasn't useful either.
+I don't know how to answer the guy question you guys are saying because you often in order. The reason it takes so long to learn this machine is 'cause you have to understand the workings of the whole thing, 'cause you have to be able to pull from different parts. You know, sometimes it's the tooling, sometimes it's the machine itself. Sometimes it has to do with like.
+The the feeds and speeds, sometimes it has to do with you know your your work holding. I mean it's just like and you have to be able to have that knowledge cause otherwise that's why guys who are new have so much trouble because they they only have like they only know this this much.
+But that's what you just said. I think was maybe good. There's tooling, there's the machine itself, there's feeds and speeds, there's work holding. Those are kind of categories of of things that you have to pull from all those categories, but you need, you need to know all of those to to identify.
+To troubleshoot a problem like this problem, which is a problem we have.
+Regularly. Yeah. I mean, those things are all good, but there's another, you know, 10 things you might want to try. And to that point, the bottom one's feeds and speeds. The top one is the actual, like, adjustment of the tool. The other one is the actual grind on the tool. So we just pulled from three different sections.
+Totally different knowledge bases. You know a guy, a guy who's setting up, he won't know anything about feeds and speeds. He's told you're running the machine, the machine is going this fast and that's what it is. So. So he might be thinking like my tool grind is wrong and then and then a guy like Dave will go over and go.
+Well, we have the wrong gear on and we're going twice as fast as we should. OK, but maybe that's a good way. When you're answering the questions, you need to consider potential sources from all these different categories. OK. You know what I mean? Yeah, like, just like you said, right. So it needs to.
+We need to know that is the tooling correct? What's the tooling, right? And this could be kind of stuff, kind of like the fishbone, right? So it's kind of like we're doing this fishbone root cause analysis and just having different it's. But isn't that what it's doing? I mean, it's pulling from all those sections it's pulling from.
+Everything. OK, right. Like the alphabet soup of the alphabet soup. It's, yeah, it's alphabet soup is exactly what it is. And what we're saying is you need to pull something from these six bowls of soup that have some categories, right? But that would mean breaking down every problem into a category.
+Well, no, I think it could be. Well, no, we could be saying I'm just so. So we could be saying that you know when you're answering questions, make sure you incorporate concepts of speeds and feeds, work holding and the tooling, right. And then as we're.
+Loading these documents up, what that means is we need to kind of tag them or or or link them into OK, that's a speed and feed thing, right? That's a tool like back to this tool holding thing. That's a tool holding thing, right? If it's not holding the tool correct, correct, who's assigning in all these categories though?
+Oh we we we we we would we would use a an LLM to say to say you know go through these documents and help help us build the the because it can say hey that's that's a tool right and.
+And classify it as a tool, right? Yeah. You would use it. You would use the LLM to try and bucket things into these different categories. So I guess you can tell us. Yeah. I mean, in your building, that's. Yeah. Yeah, you guys do. Yeah. I guess we can give you categories. Yeah. I don't know. I don't. I mean.
+We have no idea if that's gonna work better. You're just vacuolating. Yeah, yeah, yeah, yeah. This is where things are going. I'm it's it's there. So a we don't have the documents we need, right? But B, unless they're in there somewhere. Yeah, yeah, yeah. So we can keep on drilling, right?
+And just like you would ask a question, keep on going down, down, down, right? And we can do that. But but my point is too, if if there's a once again a a framework that we should be applying to this thing, like that's going to be useful information instead of just this alphabet soup that we're throwing.
+In there right now, right. It's just looking at words, right. And if we can say, hey, this word is kind of associated with how fast and this is and and we, yeah, we can do that. We just need to know what the categories are because the LLM will do a good enough job of saying, yeah, that's obviously a speed and feed thing.
+OK. You know, if we get 6 categories, it'll probably pick the right category, yeah.
+But you guys are saying it's not neatly partitioned into categories. Yeah, very. No, that'd be too easy. Yeah, yeah, yeah, yeah. It's like one very large, complicated interrelated thing. You have to try. Yeah, 30 different things maybe, right? And again, until you finally get it. OK, my thought is like, maybe at the top.
+At the top you have like, OK, this is, this is a question about like part quality, what influences part A ABCD, tooling, whatever, all those different categories we talked about and then like what influences those things?
+So this is that decision tree type process. Like how do we go from here down to like, OK, go down this path, this path, this path, this path to figure out OK, try ABCD. Isn't that what troubleshooting guys try to do though? I'm just wondering if that that that.
+If you look at this, yeah, one problem is right here and then this is all the answers.
+That's basically what we're. Yeah, yeah. And it's going through all of everything that we just listed. Yeah, yeah, yeah, yeah. So I a lot of what you guys are saying, like we can give you the answers, but like all this other stuff is, yeah, just like probably the machine stuff is sure. Doesn't make sense to you. Yeah, yeah, doesn't make sense. I have no idea.
+Yeah, we're talking Japanese. You're talking German. I get it. Yes. Yeah, right. Yeah. Yeah. OK. So do we want to just drill in on this one, 'cause you're saying it's OK answers, but maybe not good enough or it's part of this, part of this I could be. I've told it specifically not to give that much, so.
+So I guess my my one thought I'm curious to see on that instruction for tool details of 69. OK 'cause I I wonder if they gave or gave us more this 51983. I wanna see if it's different.
+This is the whole instruction book. Yeah, yeah, OK.
+Yeah, OK, it's the same one. How is it coming up?
+If I was to look at page 69.
+Oh, I see the team social T blade.
+No, that's a facing tool.
+Instruction tool. Instruction book tool details, page 69. This is a with a hole all the way through it, isn't it? Oh, isn't that a? It's a. It says it's a special. That's a box tool blade. And then you got a.
+Formal circular form. I don't know how it's talking about it.
+So this is not even a related thing. This is more like a circular circular cutoff tool. A circular cutoff tool, but it's talking about AT blade and the go go back to the.
+It says use correct high speed steel T15 blade and grind the relief for the cutoff detail angle shown. All right, that sounds good. But then it's referencing page 69, which I don't see any of that there. I'm just confused. I wonder, I wonder if what is 7/3? Yeah, I'm wondering if it's.
+Reading page 69.
+The 7th page, sorry.
+I don't know. To be honest with you, I don't know why it's doing this.
+Uh, page 69.
+Is what? What? What is page 69 saying? Is a it's just this. It's just this. It's like a print of like various tools. I don't see it. I see that in T blade so it like has the words right? It just I don't know where if it's referencing that page, it just doesn't make sense.
+Yeah, maybe. Maybe it's not capturing the precise. Um.
+Page number at the bottom.
+Just referencing the angles on that page, but maybe the information in the front part of it is someplace else that we document.
+So I've got like probably about 15 more. Yeah, yeah, yeah. And so what I wanna do is I wanna get an idea of like, you know, as we continue to get together, have like.
+I guess like some more, like a a good map of what we're gonna do. Yeah, yeah, plan. Yeah, yeah, yeah. And an idea of like, at what point do we roll this out and just start just to use it and then start to make notes and say, hey, this doesn't seem right. Is this something that we can pull up on our own?
+Computer is this like only no, no, no, no this is this is available and we and we could just have it up there and just and and give you guys access to it and but I think Ethan's suggestion having a comment box right is pretty important right. You know because then we could start to do things and just make notes and not maybe maybe not put it live on the floor maybe.
+Alive on the floor. Why not? Yeah. And then just if we could take notes or guys, what'll happen is that the guys will be afraid and then they'll come and they'll make a comment to me. They'll be like, hey, I asked it this and it told me this and I can go, OK, well, let's let's go back and try it together. But.
+Yeah, yeah, yeah. OK, this is this is what it said about page 69. Contains a tooling detail to specifically the circular cut off tool and ships the cutting angles and tip rays. It's the correct place to site blade geometry.
+Oh.
+Seeing. Is there anything about it? Oh yeah, it was circular cutoff tool. Sure. It's just weird 'cause it was talking about AT blade, which we all use AT blade.
+OK, that answer makes sense is why is it chose 69? But where is it referencing AT15 blade? Or is that is this AT15 blade? No, that's the oh T 15 is the type of tool. It could be, yeah. Oh, that's what it is, right?
+OK. It's not AT blade. T OK, got it. Alright, so that was OK user error part. OK, so it's related, it's related, you know, 'cause there's there's a blade that we call AT blade. And so I was looking at that going thinking.
+One of them is actually AT15, right? But that's also a.
+A steel. A different type of steel for tools. Yeah, yeah, yeah. See, we would never call this tool a blade, because if you think of a blade, you think of like like a knife, right? And this doesn't look like a knife. So we call that a circular cut off tool, right?
+And I don't even know where they would reference this as where does it even say?
+Right there. Material T15 high speed steel. So OK, that makes sense. So that's why I said user error on it. We're going deep on on this stuff, right. So, so I think if you're just testing it, like why did it come? Because we we wanna like, I'm like, I don't know. Yeah, yeah.
+Yeah, OK, OK. So I think a comment box and then for some reason I lost since you say 0 subqueries. I know that. I know that's wrong. I lost that. It should be giving me the detail of what it's what. So I'm I'm losing the the trace history because that trace history is back.
+Back over in here area. So I I don't know why it's not coming up. Have you guys done this? I know not this specific, but you've done this for other companies at this level. Well the this machine detailed stuff. So we've done a lot of like I we did stuff with like.
+Kind of resume sources and like jobs. I did this one company had 100,000 people and we were using the same technique to find jobs and people and all. It's like lots and lots of stuff, right? But that was kind of easy because it was just a resume thing and but it mattered. We had to.
+Kind of say, hey, you have to go by country because countries have different rules and you know what I mean? So it's the same. That's just why I'm asking, is there a structure that we need to fit within because of engineering or or?
+Or is it just the big alphabet soup and just try to try and find it? Yeah, yeah, yeah, yeah. No, it would be easier if there was. But I mean, we could give you those silos, but I don't know how you're gonna get and how it's gonna help the answer. We just said, yeah, use speeds and speeds and machining and tooling and.
+You know, I don't know what. I don't know what you do with that.
+Yeah, 'cause it's not like we're gonna go and look at everything. No, no, no, no, no, no, we would have to. And then and that's it. You know, honestly, if it's if the document's not there, it doesn't matter what you have for this ontology. It's like the document's not there, right? You know, so, so, so I think our our, our main thing now is.
+I think that's almost like a nice to have thing. I think the main thing I'm seeing is we need to make sure that the documents are there, right? And if we're if we have gaps in documents, then that's number one, right? Right. I think you have a lot of.
+Good answers to problems. It's just not all the answers. Yeah. And we could add some good answers. OK, so that would be helpful to you. So the the other thing that I'm I have here is I have like a not the smartest model doing this.
+I have what we call a mini model, right? I'm using the mini model here and what that means is it doesn't have the most. Yeah, it's mini doesn't have the most advanced reasoning. So, so, so kind of the the the most advanced it it's.
+It's quick and it's faster, but it's not as as as smart. OK, right. So how would that be valuable? So yeah, yeah, no, because it's searching and and does it need to be smart? It just needs to say what it found, right? But I guess that's the thought.
+When you're having a smarter model there, it's going to be slower and it's more expensive, but it could. Um.
+Make sure it's answering the question better. You know what I mean? You know what I mean? If it needs, if it needs some reasoning to really understand that, maybe. But I don't think that's what we're well, how are we going to know any of this stuff until we try it? Yeah, yeah, yeah, yeah.
+Yeah, yeah, I think we just try it again and we could almost even. I'm just thinking out loud too is we could put two versions out there, one for one person, one for another and try different. They call it AB testing. OK, this one, this one, right. You know, but or we could just we could right now we only have in that department. We only have one computer.
+Yeah, really. They don't use computers for anything. Yeah, yeah, yeah. Other than clocking, clocking out. So we have SPC, SPC, right? Yeah, that's the only thing we do. So and it's not very frequent. So if we this is just we log on to a certain website or.
+Yeah, yeah, it it's just, it's just a, it's just a website basically. Yeah. And you mentioned we're paying for this is how does that work? Is it we're paying per search or we pay for when it's on the amount of cost per search is negligible.
+Right. I think the most expensive thing right now with this thing is um.
+Where all the documents are stored, I think it costs about.
+We have it set up right now about 8080 bucks a month or something like that just for the, you know, for that. So that's that's kind of is that a lot or a little, I don't know on that that's, you know, I think that's fine. It cost a bit more.
+For us to kind of load everything up but but once once it's running the the usage will be minimal. You only notice it right the I I was because I was looking at the cost and I think as an example I think it's gonna be 120 bucks this month or something and the only reason it was 120 instead of 80 was because I had to spend the 40 bucks to.
+Go through all the documents, OK and and load them up. But that's a one time thing. OK, right. So it's not expensive at all really. You know, right. So but if we if we're not using this and we're spending roughly $1000 a year just to store the documents, is that.
+Well, yeah, yeah, yeah. And there ways to yes, right. Yeah. And then, yeah, yeah, yeah. And I think, I'm just wondering, I don't think there's a way to turn it to service, right.
+You're on a AI search. No, no, no, I think that's the minimum. OK, yeah, yeah. So and are these is this, It doesn't seem like, you know, I mean, there's a few more books here, but there's not like a lot of stuff that I gave you. The videos probably take up the most.
+Bandwidth or storage I guess is the right word. No, I think it was actually in the the books, some of the books because of the because of the the picture, the, the, the, the drawings, drawings and we didn't give you. I mean I've got drawers of like drawings like especially if like right behind you like you can roll on this table.
+Of just the, you know, of all the attachments that I don't know blueprints. Yeah, yeah, you know, the blueprints for all the attachments in the machine, which I don't know if it's any value of of putting in. I don't. It's not.
+Not helping. It's not much difference than actually going and getting the blueprints. Right. Well, I don't know. I don't know. Does it read the prints? Does it utilize them, do you think? Yeah, we we we're we're doing some processing on the.
+On the prints right now, right. And um, I think there's, um, so I did, it's kind of like low, medium and high. So I did the kind of medium processing on the prints so that it understands it. There's another process where we can go through and do a a real deep.
+What's the thing? Just annotating everything. OK, right. You know, and and and you know, do a separate process to kind of the print, but then annotate it.
+Right. And then put them in together. I did something kind of halfway in the middle there now. So I don't know, but I but based on the answers and the questions, I'm like, I don't think that's no, I don't. I don't think it's worth it. I just, yeah, yeah, yeah. We've got all this stuff. And so my point was, is, you know, we start to add a lot of stuff. No, no, no, no. Or is this kind of like a basic coffee?
+Yeah, yeah, no, yeah, it's a yeah, it's just you're in the you're at the base tier. You could add in five times more documents. It wouldn't change the price. OK, OK. Because I'm thinking like, OK, we start want to add other departments and this is something like, oh, why don't we throw Acme because it's not that different a lot of the.
+A lot of the troubleshooting stuff is gonna be similar for for similar types of machines. Yeah. And I think other guys could benefit from it. But you know, we chose to do this department first. Yeah, yeah, no, I don't think that.
+And even if you used it every day like.
+20 times a day. I don't think the the the the the cost would be that much higher. OK, because the the the token costs are pretty low. I'm gonna try and make them more expensive with this chat versus the mini. OK, you know, just to see if it.
+Kind of answers it, but but I don't know. Back to your point, I don't think you need more intelligence in answering it just to find it or not. That's the thing that we're finding, right? Yeah, I think if.
+So if you ask it a question like how to get rid of a cut off for and then you go through all the.
+Whatever the system comes up with, and then there'd be a the the number 11 would be. What does Dave say? Or not called that, but something else. And there'd be a whole list of things that I would suggest trying, yeah.
+Once you've gone through all the basic stuff, but I almost think though the instructions we give it because I I'm thinking it's too lean right now in the answers it's giving. It was too verbose before. Now it's I think too lean and I think that.
+Part of the instructions should be give an overview of the answer space or something like that, and then what you're specifically drilling in on, right? You can say we found 15 items, here's 5.
+Or something like that, you know, 'cause that's, I think what you're saying, right? Well, I'm saying that once you've gone through all the.
+All the things that the book says to go through, then there's the other things that aren't in the book that we that we could add to that and actually make them bullet points also. No, no, I think that's that would just take, it just takes a long time. But yeah, for every tool holder, for every.
+Three incidents that we come up with.
+You know, I don't know how we would actually go about doing that. Well, like I say, I think that the way is to annotate the answers and questions for Dave or drill downs for Dave or something like that. That's that's maybe that's the the thing and say, OK, let's do a drill down on this, let's do a drill down on that, right. We're we're we're actually trying.
+Things that aren't, you know, mainstream answers.
+Yeah, but that, you know, that's the way troubleshooting is. You just, you gotta do whatever works. And yeah, once you go through the basics, then what's the advanced layer, right? Yeah.
+Yeah, 'cause I don't think to your point, we're gonna get sitting through these. We have, we have to spend another year. Yeah, exactly. We never get through. So you have to put it out there and and just kind of document and then OK, then OK, Dave, you know, for afternoon, I can see it that this is like a person.
+A new operator's gonna be on the floor and have some knowledge and then we're gonna start just teaching it. Yeah, and we gotta teach this thing. So the the question I think David's asking is how are we gonna, how are we gonna teach it? Cause we're not gonna be the ones. So you're saying we're gonna just take notes somewhere either typing it.
+You know, in some sort of annotation box and that will somehow get to you or are we gonna or can we just take that and upload it into this chat bot? And maybe that maybe we don't have to answer that right now, but that's what I'm that's yeah, yeah, yeah, yeah, trying to no, no, but that we need.
+An operational process to your point. Yeah, I get that. And and I think, yeah, we need, we need to get a way for you guys to be able to tag issues and then take, you know, just speak or whatever into something and.
+Load up the file, right? And and then we we can update the system that. And that's the standard stuff like that. You can even make like a voice memo. Yeah, we could like text that to somewhere and then that gets put in and yeah, things like that. I I have a feeling we're gonna try a bunch of things and some are gonna work better than others. Yeah, and.
+And then you let us know, hey, this works really well and or this doesn't and or we have things that we like.
+But I think too is how how to practically use it on the floor. That's I guess a question I have because I'm worried about putting a computer out there. Nobody turning it on, you know, you know, like how how do you get some training? I think, yeah, but I think if somebody has an issue with a cut off for.
+Correct.
+They'll open it up and it tells you try this, try this, and I'd be like, oh, OK, I'll try these different things. I didn't think of that. I'll try that. And then they still have an issue. And then there's these other things you can, yeah, go to.
+And then and I think that would be helpful and if they could get this is um.
+Is this something that we intend to only put on like a workstation or is this something they could have on their phone? Because I'm saying you can have on your phone. So I mean, I think, yeah, don't want the guys use their phones on the phone. They're already using them. Yeah, OK. But anyway, I mean, I think we start by putting it on our.
+Our work, you know, our workstation out there and then training them. And it doesn't seem like it's a lot of training. I think anyone can walk up and type in a question and yeah, and go.
+Like I said, you show it to them. I think it's important to start it off with the context of, hey, this is a new employee you were training. Yeah, not this is the all knowing Oracle, right? You're gonna lose confidence in after the first question, right? Because I can say that being the you use it once and never turn it on.
+Like this beta that is meant to be iterated on is treated as the product that nobody wants to. And there's there's enough guys out there that have been there's at least two or three or use have are using or have used some form of ChatGPT or something. Mm-hmm. That have seen the the.
+They're like, man, last year didn't know this and now. So I think there are guys out there that will be excited about this and will use it and then other guys will start to follow. Sure. And just it's, hey, anything in your manuals, boom, it's there. That's that's the message I think. Yeah, you can look up anything in your manual and and I think I know Chad and I think.
+Both Chad and Abel are pretty pumped about this. So they'll use it and then the guys are going to follow what they're doing. So, OK, let's just give it a shot. Yeah, yeah, yeah. And I I'm kind of with you. I think it got close enough on some of these things that it's not a train wreck and we just got it. We'll put those points in and and most of them are.
+They most of them have enough knowledge to know like, well, you know, like that the shape tool one, like they pulled up for a size tool. Yeah. If they pull it and go, well, it's a dovetail. I've got a circular there there. They know that, you know, they know enough to know like, OK, they're not working for me. You know, they're not just gonna go blindly follow what. Yeah, yeah, yeah, yeah, what this thing says.
+Yeah, and we'll do some brainstorming a bit about how to best capture things like it's it messed this up a dub tool and it got the this wrong or you know, and there could be almost like a list of things that um.
+You know, and maybe once, once it's on the floor and somebody has gone through all the bullet points and it's and they still don't know, that's something that they should.
+Make a note of and then maybe, you know, some myself or somebody else can go through and add some things. Yeah, yeah, that will be the hard thing. Yeah, it'll just take a lot of time. Well, I I'm well, I'm saying I think it's gonna be hard for guys to sit there and.
+Type in. Oh well, I tried this and this didn't work. And you know, making a note, but you know, we'll see, you know, we just have a button where you flag it though and it saves the chat history. OK, and you can look back at it and say, OK, like when we review the session in a month from now.
+There's five things that are flagged. We don't have to brainstorm questions. We could say, yeah, no, it should be saving the chat history anyways, right? OK. And then we can always review that that feedback with you guys to see, OK, it's a little bit unclear like why this is flagged as a thumbs down or something like that. Yeah, why is this?
+Incorrect or right. The thing is, is that you're gonna have to find the person who is is there gonna be? Is each person gonna have their own login or or is this like, hey, this is, you know, this is chat or this is Abel or something? That's a good idea. That's a good idea. We could, we could, we could. I wasn't planning on that. But then you gotta have a login and a password.
+You know, like, well, I don't even know if it's. Yeah, I guess, right. Yeah. I don't know. I think you're right. Let's start as simple. Yeah. And then if it gets to the point, because I think what's gonna happen is that if we flag something, they just hit flag. Well, then if the person who we don't know who flagged it, how are you gonna do it? We we can maybe make them put their initials in.
+Or something. You know, like, you know, something like that. Like identify yourself as a flag. You know, it won't say the flag unless you sign. Yeah, that's good. You know, so we know. Well, I mean, or could the question be generic enough that anybody could maybe. Yeah, I think it's some situation. Sure. Yeah.
+All right. Well, Dave, we appreciate you. Sure. Thank you. Will it be?
+When it's on the floor, will it still take a long time, a minute and 1/2 or something before it comes up? I'm gonna try and speed it up. It's a little slow. Yeah, if you're just standing there. No, no. What? I think the biggest thing will be this streaming like I was talking about and if it starts, it'll.
+Hey, start within 5 seconds or something. You know, start coming slow. Slow words will start coming back. You know what I mean? Right now it's waiting for everything and then it's it's doing that. So. So yes, I I agree. It's very slow. And I was gonna, I was gonna actually crank it up.
+So like instead of for this session that is 75 bucks a month to like the 250 version and it's like no, no, that's not gonna speed it up. Your issues in this other area, which was good. Wow, because I just gotta fix my app basically.
+
+Quentin Fisher stopped transcription
+
+
+
+
+
+

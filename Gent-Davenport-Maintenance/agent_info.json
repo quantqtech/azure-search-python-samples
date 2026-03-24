@@ -1,0 +1,18 @@
+{
+  "model": "gpt-5-mini",
+  "instructions_len": 166,
+  "tools": [
+    {
+      "type": "azure_ai_search",
+      "azure_ai_search": {
+        "indexes": [
+          {
+            "project_connection_id": "/subscriptions/09d43e37-e7dc-4869-9db4-768d8937df2e/resourceGroups/rg-gent-foundry-eus2/providers/Microsoft.CognitiveServices/accounts/aoai-j6lw7vswhnnhw/projects/proj-j6lw7vswhnnhw/connections/searchConnection",
+            "index_name": "video-maintenance-index",
+            "query_type": "simple"
+          }
+        ]
+      }
+    }
+  ]
+}
