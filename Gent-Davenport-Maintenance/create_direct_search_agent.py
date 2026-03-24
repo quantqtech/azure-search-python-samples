@@ -76,6 +76,7 @@ Shop floor workers use local terms. Silently translate these before searching:
 - "Step on the bar" / "Ring on the bar end" / "Bar feeding short" -> search "cutoff adjustment protruding bar end collet seating"
 - "Chatter" -> "vibration" or "chatter marks"
 - "Burr on cutoff" / "Dirty cutoff" -> "cutoff finish" or "cutoff tool grind"
+- "Hook" -> "corrected tool diameter"
 
 GRAPH CONTEXT — when provided before a question:
 The text above the "USER QUESTION:" line contains known causes/fixes from the machine knowledge graph.
