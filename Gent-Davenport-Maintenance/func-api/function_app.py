@@ -1741,6 +1741,8 @@ async def submit_feedback(req: Request) -> JSONResponse:
         "initials": body.get("initials", ""),  # who typed the comment (shop floor identity)
         "username": display_name,  # who is logged in (JWT identity)
         "reasoning_level": body.get("reasoning_level", ""),
+        # Prior turns in the conversation — allows admin to see full thread context
+        "conversation_history": json.dumps(body.get("conversation_history", []))[:32000],
     }
 
     try:
@@ -1813,7 +1815,9 @@ async def get_feedback(req: Request) -> JSONResponse:
                 "rating": entity.get("rating"),
                 "notes": entity.get("notes"),
                 "initials": entity.get("initials"),
+                "username": entity.get("username", ""),
                 "reasoning_level": entity.get("reasoning_level"),
+                "conversation_history": entity.get("conversation_history", "[]"),
             }
             for entity in entities
         ]
