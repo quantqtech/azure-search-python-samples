@@ -161,6 +161,13 @@
         }
         .response-box.expanded { max-height: none; }
 
+        /* Markdown content inside response cards */
+        .response-box p { margin: 0.4rem 0; }
+        .response-box ol, .response-box ul { margin: 0.4rem 0; padding-left: 1.5rem; }
+        .response-box li { margin: 0.2rem 0; }
+        .response-box code { background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px; font-size: 14px; }
+        .response-box a { word-break: break-word; }
+
         .notes-box {
             background: #fff3cd;
             padding: 0.75rem 1rem;
@@ -562,11 +569,6 @@
                    <div class="notes-box">${escHtml(item.notes)}</div></div>`
                 : '';
 
-            // Truncate long responses in the card (expandable)
-            const shortResp = item.response && item.response.length > 400
-                ? item.response.slice(0, 400) + '…'
-                : (item.response || '');
-
             return `
                 <div class="card" id="card-${i}">
                     <div class="card-header">
@@ -582,7 +584,7 @@
                             <div class="field-label">Response <small style="font-weight:normal;text-transform:none;">(click to expand)</small></div>
                             <div class="response-box" id="resp-${i}"
                                  onclick="this.classList.toggle('expanded')"
-                                 style="cursor:pointer">${escHtml(shortResp)}</div>
+                                 style="cursor:pointer">${formatMarkdown(item.response || '')}</div>
                         </div>
                         ${notesHtml}
                     </div>
@@ -604,6 +606,64 @@
                 .replace(/>/g, '&gt;')
                 .replace(/"/g, '&quot;')
                 .replace(/'/g, '&#39;');
+        }
+
+        // Render markdown in responses — same logic as chat page (index.html)
+        // Escapes HTML FIRST for XSS safety, then converts markdown to HTML
+        function formatMarkdown(text) {
+            text = escHtml(text);
+            // Strip citation annotation markers like 【6:1†source】
+            text = text.replace(/【[^】]*】/g, '');
+            // Markdown links → clickable anchors
+            text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+            // Remove bare URLs in parentheses that weren't linked
+            text = text.replace(/\(https?:\/\/[^)]+\)/g, '');
+            // Bold and inline code
+            text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+            text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+            // Split into paragraph blocks on double newline
+            const blocks = text.split(/\n\n+/);
+            const html = blocks.map(block => {
+                block = block.trim();
+                if (!block) return '';
+
+                // Numbered list: block starts with "1." or "1)"
+                if (/^\d{1,2}[).]\s/.test(block)) {
+                    const items = block.split(/\n(?=\d{1,2}[).]\s)/);
+                    if (items.length > 1) {
+                        const lis = items.map(item => {
+                            const cleaned = item.replace(/^\d{1,2}[).]\s*/, '').trim();
+                            return cleaned ? '<li>' + cleaned + '</li>' : '';
+                        }).filter(x => x).join('');
+                        return '<ol>' + lis + '</ol>';
+                    }
+                }
+
+                // Bullet list: lines starting with "- "
+                if (/^- /m.test(block)) {
+                    const lines = block.split('\n');
+                    let result = '';
+                    let inList = false;
+                    for (const line of lines) {
+                        if (/^- /.test(line)) {
+                            if (!inList) { result += '<ul>'; inList = true; }
+                            result += '<li>' + line.replace(/^- /, '').trim() + '</li>';
+                        } else {
+                            if (inList) { result += '</ul>'; inList = false; }
+                            const trimmed = line.trim();
+                            if (trimmed) result += '<p>' + trimmed + '</p>';
+                        }
+                    }
+                    if (inList) result += '</ul>';
+                    return result;
+                }
+
+                // Plain paragraph — single newlines become <br>
+                return '<p>' + block.replace(/\n/g, '<br>') + '</p>';
+            });
+
+            return html.join('');
         }
 
         function copyToClipboard(question, response) {
