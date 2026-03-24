@@ -1,4 +1,10 @@
 """
+⚠️ NON-PRODUCTION — QUARANTINED (2026-03-24)
+This script targets the retired V2 MCP/Knowledge Base agents (davenport-fast,
+davenport-balanced). These were replaced by davenport-direct-v1 which uses
+azure_ai_search directly. Kept for reference only.
+
+Original description:
 Update davenport-fast and davenport-balanced agents to v3.
 Points them to the fixed Knowledge Bases with correct MCP config.
 """

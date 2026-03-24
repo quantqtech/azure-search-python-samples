@@ -1,7 +1,18 @@
 # Gent Davenport Maintenance - Project Instructions
 
 ## Project Overview
-Davenport Model B screw machine technical support system using Azure AI Search agentic retrieval (Foundry IQ). Agents connect to knowledge bases via MCP to answer shop floor questions.
+Davenport Model B screw machine technical support system. Shop floor machinists ask questions, get answers with citations from a unified search index.
+
+**Production agent**: `davenport-direct-v1` — uses `azure_ai_search` tool against `davenport-kb-unified` index (1,241 docs). Fast (~30s).
+
+**Retired (V2)**: Foundry IQ / MCP knowledge base pipeline — 3 separate agents, 3 indexes, 85-95s per query. Too slow. Do NOT use `reasoning_level: "balanced"` — that routes to the old MCP agents.
+
+### Quarantined Scripts (V2 — non-production)
+These scripts are kept for reference but target retired V2 agents. Do NOT run them.
+- `update_fast_balanced_agents.py` — `davenport-fast` + `davenport-balanced` (MCP/KB)
+- `create_agent.py` — `davenport-assistant` (MCP/KB)
+
+Production deployment script: `create_direct_search_agent.py` only.
 
 ## Azure Resources (rg-gent-foundry-eus2, East US 2)
 - **Search Service**: srch-j6lw7vswhnnhw

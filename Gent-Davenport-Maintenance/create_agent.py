@@ -1,4 +1,10 @@
 """
+⚠️ NON-PRODUCTION — QUARANTINED (2026-03-24)
+This script targets the retired V2 MCP/Knowledge Base agent (davenport-assistant).
+Replaced by davenport-direct-v1 which uses azure_ai_search directly.
+Kept for reference only.
+
+Original description:
 Create a Foundry Agent with MCPTool connected to the davenport-machine-kb Knowledge Base.
 Uses existing infrastructure in rg-gent-foundry-eus2.
 
