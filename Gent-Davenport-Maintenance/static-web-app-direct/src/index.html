@@ -1282,6 +1282,13 @@
             const initials = document.getElementById(`fb-init-${msgIndex}`)?.value
                 || userDisplayName;
 
+            // Capture prior turns so admin can see full conversation context
+            const priorTurns = messageHistory.slice(0, msgIndex).map(m => ({
+                message: m.message,
+                response: (m.response || '').slice(0, 2000),
+                turn_number: m.turn_number || 0
+            }));
+
             fetch(`${API_BASE}/feedback`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -1294,7 +1301,8 @@
                     rating,
                     initials,
                     reasoning_level: msg.reasoning_level,
-                    notes: ''
+                    notes: '',
+                    conversation_history: priorTurns
                 })
             }).then(r => { handleAuthError(r); }).catch(err => console.error('Feedback error:', err));
 
@@ -1326,6 +1334,13 @@
             const initials = document.getElementById(`fb-init-${msgIndex}`)?.value
                 || userDisplayName;
 
+            // Capture prior turns so admin can see full conversation context
+            const priorTurns = messageHistory.slice(0, msgIndex).map(m => ({
+                message: m.message,
+                response: (m.response || '').slice(0, 2000),
+                turn_number: m.turn_number || 0
+            }));
+
             fetch(`${API_BASE}/feedback`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -1338,7 +1353,8 @@
                     rating: 'flagged',
                     initials,
                     reasoning_level: msg.reasoning_level,
-                    notes
+                    notes,
+                    conversation_history: priorTurns
                 })
             }).then(r => { handleAuthError(r); }).catch(err => console.error('Flag error:', err));
 
