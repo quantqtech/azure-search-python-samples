@@ -198,6 +198,50 @@
         .action-btn.danger { color: #c00; }
         .action-btn.danger:hover { border-color: #c00; background: #ffe0e0; }
 
+        /* Conversation history panel — shows full thread context */
+        .convo-panel {
+            background: #f5f5f5;
+            border-top: 1px solid var(--border-light);
+            padding: 1rem 1.25rem;
+        }
+        .convo-panel .convo-turn {
+            margin-bottom: 0.75rem;
+            padding: 0.6rem 0.75rem;
+            background: white;
+            border-radius: 6px;
+            border-left: 3px solid var(--border-light);
+            font-size: 14px;
+        }
+        .convo-panel .convo-turn.current-turn {
+            border-left-color: var(--gent-orange);
+            background: var(--gent-orange-light);
+        }
+        .convo-panel .turn-label {
+            font-size: 11px;
+            font-weight: 700;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 0.3rem;
+        }
+        .convo-panel .turn-q { color: var(--gent-blue); font-weight: 600; margin-bottom: 0.25rem; }
+        .convo-panel .turn-r { color: #333; line-height: 1.5; }
+        .convo-panel .turn-r p { margin: 0.2rem 0; }
+        .convo-panel .turn-r ol, .convo-panel .turn-r ul { margin: 0.2rem 0; padding-left: 1.25rem; }
+        .convo-panel .turn-r a { word-break: break-word; }
+
+        /* Expand/collapse all toggle */
+        .toggle-all-btn {
+            padding: 0.35rem 1rem;
+            border: 2px solid var(--border-light);
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            background: white;
+            margin-bottom: 1rem;
+        }
+        .toggle-all-btn:hover { border-color: var(--gent-blue); background: var(--aidan-light-green); }
+
         .spinner {
             display: inline-block;
             width: 20px; height: 20px;
@@ -317,7 +361,7 @@
         </div>
         <div>
             <label for="filter-date">Date (optional)</label>
-            <input type="date" id="filter-date">
+            <input type="date" id="filter-date" onkeydown="if(event.key==='Enter')loadFeedback()">
         </div>
         <button class="load-btn" onclick="loadFeedback()">Load</button>
     </div>
@@ -546,10 +590,23 @@
                 // Sort newest first
                 data.sort((a, b) => b.id.localeCompare(a.id));
 
-                statsEl.textContent = `${data.length} record${data.length !== 1 ? 's' : ''} found`;
+                // Stats breakdown by rating type
+                const counts = { flagged: 0, thumbs_down: 0, thumbs_up: 0 };
+                data.forEach(d => { if (counts[d.rating] !== undefined) counts[d.rating]++; });
+                const parts = [];
+                if (counts.flagged) parts.push(`${counts.flagged} flagged`);
+                if (counts.thumbs_down) parts.push(`${counts.thumbs_down} thumbs down`);
+                if (counts.thumbs_up) parts.push(`${counts.thumbs_up} thumbs up`);
+                statsEl.textContent = `${data.length} record${data.length !== 1 ? 's' : ''}` +
+                    (parts.length ? ` \u2014 ${parts.join(', ')}` : '');
                 statsEl.style.display = 'block';
 
-                listEl.innerHTML = data.map((item, i) => buildCard(item, i)).join('');
+                // Store data for expand/collapse all
+                window._feedbackData = data;
+
+                listEl.innerHTML =
+                    `<button class="toggle-all-btn" onclick="toggleAllResponses()">Expand All / Collapse All</button>` +
+                    data.map((item, i) => buildCard(item, i)).join('');
 
             } catch (err) {
                 listEl.innerHTML = `<div class="empty-state" style="color:#c00">Error loading feedback: ${err.message}</div>`;
@@ -561,6 +618,7 @@
             const ratingLabel = RATING_LABELS[item.rating] || item.rating;
             const dateStr = item.id ? item.id.replace('T', ' ').substring(0, 15) : item.date;
             const who = item.initials ? `by <strong>${item.initials}</strong>` : 'anonymous';
+            const user = item.username ? ` (${escHtml(item.username)})` : '';
             const mode = item.reasoning_level ? ` &middot; ${item.reasoning_level}` : '';
 
             const hasNotes = item.notes && item.notes.trim();
@@ -569,11 +627,19 @@
                    <div class="notes-box">${escHtml(item.notes)}</div></div>`
                 : '';
 
+            // Check if conversation history has prior turns
+            let history = [];
+            try { history = JSON.parse(item.conversation_history || '[]'); } catch {}
+            const hasHistory = Array.isArray(history) && history.length > 0;
+            const convoBtn = hasHistory
+                ? `<button class="action-btn" onclick="toggleConversation(${i})">&#128196; View Conversation (${history.length + 1} turns)</button>`
+                : '';
+
             return `
                 <div class="card" id="card-${i}">
                     <div class="card-header">
                         <span class="rating-badge ${ratingClass}">${ratingLabel}</span>
-                        <span class="card-meta">${dateStr} &middot; ${who}${mode}</span>
+                        <span class="card-meta">${dateStr} &middot; ${who}${user}${mode}</span>
                     </div>
                     <div class="card-body">
                         <div>
@@ -589,6 +655,7 @@
                         ${notesHtml}
                     </div>
                     <div class="card-actions">
+                        ${convoBtn}
                         <button class="action-btn" onclick="copyToClipboard('${escHtml(item.message || '')}', '${escHtml(item.response || '')}')">
                             &#128203; Copy Q&amp;A
                         </button>
@@ -596,6 +663,7 @@
                             &#128172; Open Chat
                         </a>
                     </div>
+                    <div class="convo-panel" id="convo-${i}" style="display:none"></div>
                 </div>`;
         }
 
@@ -664,6 +732,53 @@
             });
 
             return html.join('');
+        }
+
+        // Toggle conversation history panel for a card
+        function toggleConversation(i) {
+            const panel = document.getElementById(`convo-${i}`);
+            if (!panel) return;
+
+            // If already rendered, just toggle visibility
+            if (panel.innerHTML) {
+                panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+                return;
+            }
+
+            // First open — render the conversation thread
+            const item = window._feedbackData[i];
+            let history = [];
+            try { history = JSON.parse(item.conversation_history || '[]'); } catch {}
+
+            let html = '';
+            // Prior turns
+            history.forEach((turn, idx) => {
+                html += `<div class="convo-turn">
+                    <div class="turn-label">Turn ${idx + 1}</div>
+                    <div class="turn-q">${escHtml(turn.message || '')}</div>
+                    <div class="turn-r">${formatMarkdown(turn.response || '')}</div>
+                </div>`;
+            });
+            // Current (rated) turn — highlighted
+            html += `<div class="convo-turn current-turn">
+                <div class="turn-label">Turn ${history.length + 1} (rated)</div>
+                <div class="turn-q">${escHtml(item.message || '')}</div>
+                <div class="turn-r">${formatMarkdown(item.response || '')}</div>
+            </div>`;
+
+            panel.innerHTML = html;
+            panel.style.display = 'block';
+        }
+
+        // Expand or collapse all response boxes
+        function toggleAllResponses() {
+            const boxes = document.querySelectorAll('.response-box');
+            // If any are collapsed, expand all; otherwise collapse all
+            const anyCollapsed = Array.from(boxes).some(b => !b.classList.contains('expanded'));
+            boxes.forEach(b => {
+                if (anyCollapsed) b.classList.add('expanded');
+                else b.classList.remove('expanded');
+            });
         }
 
         function copyToClipboard(question, response) {
