@@ -355,13 +355,79 @@ The agent outputs citations in **8+ inconsistent formats** depending on how Foun
 
 ## Analytics & Observability
 
-| Store | Purpose | Location |
-|-------|---------|----------|
-| **Cosmos DB Gremlin** | Machine knowledge graph — queried at runtime | `cosmos-gent-gremlin` / `machine-ontology` |
-| **JSONL analytics** | Activity log — every query, timing, graph usage | `stj6lw7vswhnnhw` / `analytics/conversations/YYYY/MM/DD.jsonl` |
-| **Table: `feedback`** | User feedback — thumbs up/down/flag | `stj6lw7vswhnnhw` |
-| **Table: `graph-verifications`** | Human verification decisions — permanent | `stj6lw7vswhnnhw` |
-| **Table: `graph-usage`** | Edge hit/success counters — permanent | `stj6lw7vswhnnhw` |
+### Data Stores
+
+| Store | Purpose | Location | Durability |
+|-------|---------|----------|------------|
+| **JSONL analytics lake** | Activity log — every query, full response metrics | `stj6lw7vswhnnhw` / `analytics/conversations/YYYY/MM/DD.jsonl` | Append-only, one file per day |
+| **JSONL feedback lake** | Feedback events mirrored to blob | `stj6lw7vswhnnhw` / `analytics/feedback/YYYY/MM/DD.jsonl` | Append-only |
+| **JSONL graph-nodes lake** | Graph classifier selections per query | `stj6lw7vswhnnhw` / `analytics/graph-nodes/YYYY/MM/DD.jsonl` | Append-only |
+| **JSONL graph-edges lake** | Graph traversal paths per query | `stj6lw7vswhnnhw` / `analytics/graph-edges/YYYY/MM/DD.jsonl` | Append-only |
+| **Table: `feedback`** | User feedback — thumbs up/down/flag, conversation history | `stj6lw7vswhnnhw` | PartitionKey=YYYY-MM-DD, RowKey=turn_id |
+| **Table: `graph-verifications`** | Human verification decisions — permanent | `stj6lw7vswhnnhw` | Never auto-deleted |
+| **Table: `graph-usage`** | Edge hit/success counters — permanent | `stj6lw7vswhnnhw` | Survives graph rebuilds |
+| **Cosmos DB Gremlin** | Machine knowledge graph — queried at runtime | `cosmos-gent-gremlin` / `machine-ontology` | Rebuildable from documents |
+
+### JSONL Conversation Fields (per turn)
+
+Each line in `analytics/conversations/YYYY/MM/DD.jsonl` captures:
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `message` | string | User's question (truncated 32KB) |
+| `response` | string | Agent's answer (truncated 32KB) |
+| `initials` | string | Shop floor technician self-reported identity |
+| `username` | string | JWT-authenticated display name |
+| `conversation_id` | string | Links multi-turn conversations |
+| `duration_ms` | int | Total server-side response time |
+| `timing_agent_ms` | int | Foundry agent call time |
+| `timing_graph_ms` | int | Graph classifier + traversal time |
+| `timing_citations_ms` | int | Citation extraction time |
+| `input_tokens` | int | LLM input token count |
+| `output_tokens` | int | LLM output token count |
+| `sources_cited` | list | Documents the agent cited |
+| `source_count` | int | Number of sources cited |
+| `graph_starting_names` | list | Ontology nodes the classifier picked |
+| `graph_context_provided` | bool | Whether graph context was sent to agent |
+| `graph_context_chars` | int | Size of graph context in characters |
+| `agent_input_chars` | int | Total context size sent to agent |
+| `categories_tagged` | list | Answer categories (Tooling, Machine, etc.) |
+
+### Key Metrics for Managed AIR Reporting
+
+| Metric | How to Compute | What It Tells Us |
+|--------|---------------|-----------------|
+| **Daily query volume** | Count lines per day in JSONL | Adoption trend |
+| **Unique users/day** | Distinct `initials` per day | Breadth of adoption |
+| **Satisfaction rate** | Feedback table: thumbs_up / (thumbs_up + thumbs_down + flagged) | Answer quality |
+| **Knowledge gaps** | Feedback table: count where rating = flagged or thumbs_down | Content investment priority |
+| **Avg response time** | Mean `duration_ms` per day | Performance health |
+| **Avg sources cited** | Mean `source_count` per day | Retrieval quality |
+| **Graph utilization** | % of queries where `graph_context_provided` = true | V3 graph value |
+| **Top graph paths** | graph-usage table: highest hit_count edges | Most valuable knowledge paths |
+| **Token cost proxy** | Sum `input_tokens` + `output_tokens` per day | Cost forecasting |
+
+### Accessing Analytics Data
+
+**Admin page** (`admin.html`): Built-in analytics tab shows 30-day summary with bar chart, summary cards (Total Turns, Avg Response Time, Conversations, Active Days), and performance breakdown. Requires admin role.
+
+**API endpoint** (`/api/analytics/summary`): Returns last 30 days of daily aggregates (turn_count, avg_duration_sec, unique_conversations, unique_users, avg_input_tokens, avg_output_tokens).
+
+**Azure CLI** (bulk analysis):
+```bash
+# Download a specific day's analytics
+az storage blob download \
+  --account-name stj6lw7vswhnnhw \
+  --container-name analytics \
+  --name "conversations/2026/03/18.jsonl" \
+  --file today.jsonl \
+  --auth-mode login
+
+# Parse with Python
+python -c "import json; [print(json.loads(l).get('initials','?'), json.loads(l).get('message','')[:80]) for l in open('today.jsonl')]"
+```
+
+### UI Trace Panel
 
 The trace panel in the UI (expandable under each response) shows:
 - **Collapsed**: duration + mode indicator
