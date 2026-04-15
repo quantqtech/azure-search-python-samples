@@ -1,0 +1,26 @@
+Call notes 2026-04-14
+Quentin Fisher - Richard Gent.
+
+Brainstorm ideas to drive adoption
+- have a tutorial, asking junior employees questions, then ranking the answers - giving a grade
+- have folks enter time (Hamrony enters time on tablet)
+- have data shown for uptime, downtime, any problems having
+- Rich is going to send me the table that they record information on - show 10 hours worked, 5 on machine a, 3 on machine b, 2 hours downtime
+- work on phone form factor - so that it is easier to use
+- get feedback from Able and Chad, these are the 2 main guys needed to drive adoption - have the guys ask the chatbot first, 
+- we do need to update some new documents.
+- potentially a trainging program for the newer folks
+- how do the guys use the tool, instead of saying no one has time to help me... use the tool to solve at least 50%
+
+
+Funding ideas
+- leverage TechCred - opens in July, will be available in September
+- need to span the next 4-5 months
+- first get feedback from team on adoption
+- then provide proposal to Magnet
+- research Jobs Ohio and workforce development
+- potential to expand to another company to see if they want to use (Rochester company)
+- Davenport themselves, have as a solution that they could sell to the market
+
+Potential Competition 
+- Harmony and Adam Ellis - they do OEE, record machine information on a subscription model, they have a subscription model and fee
