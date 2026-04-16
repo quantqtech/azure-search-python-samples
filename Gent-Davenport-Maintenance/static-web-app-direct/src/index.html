@@ -667,7 +667,9 @@
         @media (max-width: 600px) {
             .graph-panel { display: none !important; }
             .sidebar.graph-mode.open { width: 100%; }
-            #clear-btn { display: none; }
+            .input-container { flex-wrap: wrap; }
+            #user-input { width: 100%; flex: unset; }
+            #send-btn, #clear-btn { flex: 1; }
         }
 
         /* Trace panel (debugging) */
