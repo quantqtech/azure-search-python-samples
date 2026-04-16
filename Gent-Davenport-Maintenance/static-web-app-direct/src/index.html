@@ -386,6 +386,7 @@
 
         #user-input {
             flex: 1;
+            min-width: 0;
             padding: 1rem 1.25rem;
             border: 3px solid var(--border-light);
             border-radius: 8px;
@@ -661,6 +662,11 @@
             header { padding: 1rem; }
             .header-brand img { height: 40px; }
             header h1 { font-size: 24px; }
+        }
+
+        @media (max-width: 600px) {
+            .graph-panel { display: none !important; }
+            .sidebar.graph-mode.open { width: 100%; }
         }
 
         /* Trace panel (debugging) */
