@@ -447,6 +447,23 @@
             color: white;
         }
 
+        #voice-btn {
+            padding: 0.75rem 1rem;
+            background: white;
+            border: 2px solid var(--gent-blue);
+            border-radius: 8px;
+            font-size: 1.2rem;
+            min-height: var(--touch-large);
+            cursor: pointer;
+            transition: background-color 0.2s, border-color 0.2s;
+        }
+        #voice-btn:hover { background-color: #e8f4f8; }
+        #voice-btn.listening {
+            background: #ffe0e0;
+            border-color: #c44;
+            animation: blink 0.8s infinite;
+        }
+
         /* Collapsible Sidebar */
         .sidebar-container {
             display: flex;
@@ -669,7 +686,7 @@
             .sidebar.graph-mode.open { width: 100%; }
             .input-container { flex-wrap: wrap; }
             #user-input { width: 100%; flex: unset; }
-            #send-btn, #clear-btn { flex: 1; }
+            #send-btn, #clear-btn, #voice-btn { flex: 1; }
         }
 
         /* Trace panel (debugging) */
@@ -915,6 +932,7 @@
             </div>
             <div class="input-container">
                 <input type="text" id="user-input" placeholder="Ask about your Davenport machine..." autocomplete="off">
+                <button id="voice-btn" onclick="toggleVoiceInput()" title="Voice input">&#127908;</button>
                 <button id="send-btn">Send</button>
                 <button id="clear-btn" title="Clear chat and start new topic">New Topic</button>
             </div>
@@ -1266,7 +1284,7 @@
                     <button class="feedback-btn" id="fb-flag-${msgIndex}"
                         onclick="toggleFlagNotes(${msgIndex})" title="Flag for review">&#9873; Flag</button>
                     <button class="feedback-btn" id="fb-mic-${msgIndex}"
-                        onclick="toggleVoiceMemo(${msgIndex})" title="Record voice note">&#127908;</button>
+                        onclick="toggleVoiceNote(${msgIndex})" title="Dictate note">&#127908;</button>
                     <input type="text" class="feedback-initials" id="fb-init-${msgIndex}"
                         placeholder="Initials" maxlength="4"
                         value="${userDisplayName}"
@@ -1373,7 +1391,51 @@
         }
 
         // ---------------------------------------------------------------
-        // Voice memo recording
+        // Voice-to-text (Web Speech API) — for input field and feedback notes
+        // ---------------------------------------------------------------
+        let activeVoice = null;
+
+        function startVoiceInput(targetElement) {
+            if (!('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)) {
+                alert('Voice input not supported in this browser');
+                return null;
+            }
+            const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+            const recognition = new SR();
+            recognition.lang = 'en-US';
+            recognition.interimResults = true;
+            recognition.continuous = false;
+            recognition.onresult = (event) => {
+                targetElement.value = Array.from(event.results).map(r => r[0].transcript).join('');
+            };
+            recognition.onerror = (e) => console.warn('Speech error:', e.error);
+            recognition.start();
+            return recognition;
+        }
+
+        function toggleVoiceInput() {
+            const input = document.getElementById('user-input');
+            const btn = document.getElementById('voice-btn');
+            if (activeVoice) {
+                activeVoice.stop();
+                activeVoice = null;
+                btn.classList.remove('listening');
+                return;
+            }
+            activeVoice = startVoiceInput(input);
+            if (activeVoice) {
+                btn.classList.add('listening');
+                activeVoice.onend = () => { btn.classList.remove('listening'); activeVoice = null; };
+            }
+        }
+
+        function toggleVoiceNote(msgIndex) {
+            const textarea = document.getElementById(`flag-text-${msgIndex}`);
+            if (textarea) startVoiceInput(textarea);
+        }
+
+        // ---------------------------------------------------------------
+        // Voice memo recording (legacy — kept for revert capability)
         // ---------------------------------------------------------------
         async function toggleVoiceMemo(msgIndex) {
             const btn = document.getElementById(`fb-mic-${msgIndex}`);
