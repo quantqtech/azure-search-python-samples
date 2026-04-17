@@ -130,7 +130,7 @@ AGENT_NAME = "davenport-direct-v1"
 payload = {
     "definition": {
         "kind": "prompt",
-        "model": "gpt-5-mini",
+        "model": "gpt-4.1-mini",
         "instructions": INSTRUCTIONS,
         "tools": SEARCH_TOOLS
     }
