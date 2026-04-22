@@ -2204,6 +2204,8 @@ async def analytics_time(req: Request) -> JSONResponse:
         by_machine = {}       # machine (int) -> {field: hours}
         by_operator = {}      # initials -> {field: hours}
         op_machine = {}       # (initials, machine) -> total hours
+        by_machine_by_day = {}  # machine (int) -> {day_name: hours}
+        day_names = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
         for e in entities:
             machine = e.get("machine")
@@ -2215,9 +2217,19 @@ async def analytics_time(req: Request) -> JSONResponse:
                 continue
             initials = (e.get("initials") or "").strip() or "(none)"
 
+            # Weekday (Mon=0 .. Sun=6) from PartitionKey
+            try:
+                entry_date = datetime.strptime(e.get("PartitionKey", ""), "%Y-%m-%d").date()
+                weekday_idx = entry_date.weekday()
+            except ValueError:
+                weekday_idx = None
+            day_name = day_names[weekday_idx] if weekday_idx is not None and 0 <= weekday_idx <= 6 else None
+
             # init dicts
             if machine not in by_machine:
                 by_machine[machine] = {f: 0.0 for f in hour_fields}
+            if machine not in by_machine_by_day:
+                by_machine_by_day[machine] = {d: 0.0 for d in day_names}
             if initials not in by_operator:
                 by_operator[initials] = {f: 0.0 for f in hour_fields}
             pair_key = (initials, machine)
@@ -2234,6 +2246,8 @@ async def analytics_time(req: Request) -> JSONResponse:
                 by_operator[initials][f] += v
                 total += v
             op_machine[pair_key] += total
+            if day_name:
+                by_machine_by_day[machine][day_name] += total
 
         # Flatten + totals
         by_machine_rows = []
@@ -2262,17 +2276,113 @@ async def analytics_time(req: Request) -> JSONResponse:
         ]
         op_machine_rows.sort(key=lambda r: (r["initials"], r["machine"]))
 
+        by_machine_by_day_rows = []
+        for m, days in by_machine_by_day.items():
+            row = {"machine": m, **{d: round(v, 2) for d, v in days.items()}}
+            row["total"] = round(sum(days.values()), 2)
+            by_machine_by_day_rows.append(row)
+        by_machine_by_day_rows.sort(key=lambda r: -r["total"])
+
         return JSONResponse({
             "week_start": week_start_str,
             "week_end": week_end_str,
             "by_machine": by_machine_rows,
             "by_operator": by_operator_rows,
             "operator_machine": op_machine_rows,
+            "by_machine_by_day": by_machine_by_day_rows,
         }, status_code=200)
 
     except Exception as e:
         logging.error(f"Analytics time failed: {e}")
         return JSONResponse({"error": "Failed to generate time analytics"}, status_code=500)
+
+
+@app.route(route="analytics/time/trend", methods=["GET"])
+async def analytics_time_trend(req: Request) -> JSONResponse:
+    """Weekly total hours per machine over the last N weeks (admin-only).
+
+    Query param: ?weeks=8 (default 8, max 26).
+    Returns per-machine time series aligned to ISO-week Mondays.
+    """
+    auth_result = auth_helper.require_admin(req)
+    if isinstance(auth_result, JSONResponse):
+        return auth_result
+
+    try:
+        weeks = int(req.query_params.get("weeks", "8"))
+    except ValueError:
+        weeks = 8
+    weeks = max(1, min(weeks, 26))
+
+    today = datetime.now(timezone.utc).date()
+    current_monday = today - timedelta(days=today.weekday())
+    start_monday = current_monday - timedelta(weeks=weeks - 1)
+    start_str = start_monday.strftime("%Y-%m-%d")
+    # Include through Sunday of the current week for a full last-week bucket
+    end_sunday = current_monday + timedelta(days=6)
+    end_str = end_sunday.strftime("%Y-%m-%d")
+
+    hour_fields = ["setup", "run", "reset", "repair", "wait_tool", "other"]
+
+    try:
+        table = get_table_client("timeentries")
+        entities = list(table.query_entities(
+            query_filter=f"PartitionKey ge '{start_str}' and PartitionKey le '{end_str}'"
+        ))
+
+        # Build the list of week_start Mondays in chronological order
+        week_starts = [(start_monday + timedelta(weeks=i)).strftime("%Y-%m-%d") for i in range(weeks)]
+        week_index = {w: i for i, w in enumerate(week_starts)}
+
+        # Aggregate per-machine per-week totals
+        # machine (int) -> [hours for each week index]
+        machine_totals = {}
+
+        for e in entities:
+            machine = e.get("machine")
+            if machine is None:
+                continue
+            try:
+                machine = int(machine)
+            except (TypeError, ValueError):
+                continue
+
+            try:
+                entry_date = datetime.strptime(e.get("PartitionKey", ""), "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            entry_monday = entry_date - timedelta(days=entry_date.weekday())
+            monday_str = entry_monday.strftime("%Y-%m-%d")
+            if monday_str not in week_index:
+                continue
+            idx = week_index[monday_str]
+
+            total = 0.0
+            for f in hour_fields:
+                try:
+                    total += float(e.get(f) or 0)
+                except (TypeError, ValueError):
+                    pass
+
+            if machine not in machine_totals:
+                machine_totals[machine] = [0.0] * weeks
+            machine_totals[machine][idx] += total
+
+        machines_out = [
+            {"machine": m, "totals": [round(v, 2) for v in totals]}
+            for m, totals in machine_totals.items()
+        ]
+        # Sort by the most recent week's hours desc, then machine number
+        machines_out.sort(key=lambda r: (-r["totals"][-1], r["machine"]))
+
+        return JSONResponse({
+            "weeks": week_starts,
+            "machines": machines_out,
+        }, status_code=200)
+
+    except Exception as e:
+        logging.error(f"Analytics time trend failed: {e}")
+        return JSONResponse({"error": "Failed to generate time trend"}, status_code=500)
 
 
 # ---------------------------------------------------------------------------

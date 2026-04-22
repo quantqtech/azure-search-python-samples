@@ -6,6 +6,8 @@
     <title>Gent Machine - Davenport Technical Support</title>
     <!-- vis-network for graph visualization in sidebar -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/standalone/umd/vis-network.min.js"></script>
+    <!-- Chart.js for analytics charts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <style>
         /* CSS Variables for branding */
         :root {
@@ -214,6 +216,25 @@
             padding: 0 0 0.5rem 0;
             border-bottom: 3px solid var(--gent-orange);
         }
+        .sub-tabs {
+            display: flex;
+            gap: 0.4rem;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+        }
+        .sub-tab {
+            padding: 0.55rem 1.25rem;
+            background: white;
+            color: var(--gent-blue-dark);
+            border: 2px solid var(--gent-blue);
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s, color 0.2s;
+        }
+        .sub-tab:hover { background: var(--aidan-light-green); }
+        .sub-tab.active { background: var(--gent-blue); color: white; }
         .time-analytics-controls {
             display: flex;
             align-items: center;
@@ -954,54 +975,103 @@
     <!-- Analytics view — admin only, toggled via header button -->
     <div id="analytics-view" class="analytics-view">
         <h2 class="view-title">&#128200; Analytics</h2>
-        <div class="analytics-summary-cards" id="analytics-cards">
-            <div class="analytics-card"><div class="card-value" id="stat-turns">--</div><div class="card-label">Total Turns (30d)</div></div>
-            <div class="analytics-card"><div class="card-value" id="stat-duration">--</div><div class="card-label">Avg Response Time</div></div>
-            <div class="analytics-card"><div class="card-value" id="stat-convos">--</div><div class="card-label">Conversations</div></div>
-            <div class="analytics-card"><div class="card-value" id="stat-days">--</div><div class="card-label">Active Days</div></div>
-        </div>
-        <div class="analytics-chart-container">
-            <h3>Turns per Day (Last 30 Days)</h3>
-            <div class="bar-chart" id="turns-chart"></div>
-        </div>
-        <div class="analytics-chart-container">
-            <h3>Performance Breakdown — Active Days</h3>
-            <table class="perf-table" id="perf-table">
-                <thead><tr><th>Date</th><th>Turns</th><th>Avg Total</th><th>Avg Agent</th><th>Avg Graph</th><th>Avg Cite</th><th>In Tok</th><th>Out Tok</th><th>Users</th></tr></thead>
-                <tbody id="perf-table-body"></tbody>
-            </table>
-        </div>
-        <div class="analytics-chart-container">
-            <h3>Feedback by User — Last 4 Weeks</h3>
-            <table class="perf-table" id="by-user-table">
-                <thead><tr><th>Week</th><th>Initials</th><th>Total</th><th>&#128077;</th><th>&#128078;</th><th>&#128681;</th></tr></thead>
-                <tbody id="by-user-table-body"><tr><td colspan="6" style="text-align:center;color:#888">Loading...</td></tr></tbody>
-            </table>
+
+        <!-- Sub-tabs -->
+        <div class="sub-tabs">
+            <button type="button" class="sub-tab active" id="sub-tab-app" onclick="switchAnalyticsTab('app')">&#128200; App Usage</button>
+            <button type="button" class="sub-tab" id="sub-tab-time" onclick="switchAnalyticsTab('time')">&#9201; Time &amp; Machines</button>
         </div>
 
-        <div class="analytics-chart-container">
-            <h3>Time Entries — Weekly Summary</h3>
+        <!-- Sub-tab: App Usage -->
+        <div id="app-usage-tab" class="sub-tab-content">
+            <div class="analytics-summary-cards" id="analytics-cards">
+                <div class="analytics-card"><div class="card-value" id="stat-turns">--</div><div class="card-label">Total Turns (30d)</div></div>
+                <div class="analytics-card"><div class="card-value" id="stat-duration">--</div><div class="card-label">Avg Response Time</div></div>
+                <div class="analytics-card"><div class="card-value" id="stat-convos">--</div><div class="card-label">Conversations</div></div>
+                <div class="analytics-card"><div class="card-value" id="stat-days">--</div><div class="card-label">Active Days</div></div>
+            </div>
+            <div class="analytics-chart-container">
+                <h3>Turns per Day (Last 30 Days)</h3>
+                <div class="bar-chart" id="turns-chart"></div>
+            </div>
+            <div class="analytics-chart-container">
+                <h3>Performance Breakdown — Active Days</h3>
+                <table class="perf-table" id="perf-table">
+                    <thead><tr><th>Date</th><th>Turns</th><th>Avg Total</th><th>Avg Agent</th><th>Avg Graph</th><th>Avg Cite</th><th>In Tok</th><th>Out Tok</th><th>Users</th></tr></thead>
+                    <tbody id="perf-table-body"></tbody>
+                </table>
+            </div>
+            <div class="analytics-chart-container">
+                <h3>Feedback by User — Last 4 Weeks</h3>
+                <table class="perf-table" id="by-user-table">
+                    <thead><tr><th>Week</th><th>Initials</th><th>Total</th><th>&#128077;</th><th>&#128078;</th><th>&#128681;</th></tr></thead>
+                    <tbody id="by-user-table-body"><tr><td colspan="6" style="text-align:center;color:#888">Loading...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Sub-tab: Time & Machines -->
+        <div id="time-machines-tab" class="sub-tab-content" style="display:none">
             <div class="time-analytics-controls">
                 <button type="button" id="time-prev" onclick="changeTimeWeek(-1)">&larr; Prev</button>
                 <span class="week-label" id="time-week-label">Week of ...</span>
                 <button type="button" id="time-next" onclick="changeTimeWeek(1)">Next &rarr;</button>
             </div>
-            <h4 style="margin-top:1rem;color:#444;font-size:15px;">Machine Utilization</h4>
-            <table class="perf-table time-grid" id="time-by-machine">
-                <thead><tr><th>Machine</th><th>Setup</th><th>Run</th><th>Reset</th><th>Repair</th><th>Wait Tool</th><th>Other</th><th>Total</th></tr></thead>
-                <tbody id="time-by-machine-body"><tr><td colspan="8" style="text-align:center;color:#888">Loading...</td></tr></tbody>
-            </table>
-            <h4 style="margin-top:1.5rem;color:#444;font-size:15px;">Operator Summary</h4>
-            <table class="perf-table time-grid" id="time-by-operator">
-                <thead><tr><th>Initials</th><th>Setup</th><th>Run</th><th>Reset</th><th>Repair</th><th>Wait Tool</th><th>Other</th><th>Total</th></tr></thead>
-                <tbody id="time-by-operator-body"><tr><td colspan="8" style="text-align:center;color:#888">Loading...</td></tr></tbody>
-            </table>
-            <h4 style="margin-top:1.5rem;color:#444;font-size:15px;">Operator &times; Machine</h4>
-            <div style="overflow-x:auto;">
-                <table class="perf-table time-grid" id="time-op-machine">
-                    <thead id="time-op-machine-head"></thead>
-                    <tbody id="time-op-machine-body"><tr><td style="text-align:center;color:#888">Loading...</td></tr></tbody>
+
+            <div class="analytics-summary-cards" id="time-summary-cards">
+                <div class="analytics-card"><div class="card-value" id="time-stat-total">--</div><div class="card-label">Total Hours</div></div>
+                <div class="analytics-card"><div class="card-value" id="time-stat-machines">--</div><div class="card-label">Machines Active</div></div>
+                <div class="analytics-card"><div class="card-value" id="time-stat-operators">--</div><div class="card-label">Operators Active</div></div>
+                <div class="analytics-card"><div class="card-value" id="time-stat-downtime">--</div><div class="card-label" id="time-stat-downtime-label">Top Downtime</div></div>
+            </div>
+
+            <div class="analytics-chart-container">
+                <h3>Machine Workload — This Week</h3>
+                <div id="chart-machine-workload-empty" style="display:none;padding:2rem;text-align:center;color:#888">No time entries this week.</div>
+                <div style="position:relative;height:340px"><canvas id="chart-machine-workload"></canvas></div>
+            </div>
+
+            <div class="analytics-chart-container">
+                <h3>Weekly Trends — Hours per Machine (Last 8 Weeks)</h3>
+                <div style="font-size:12px;color:#888;margin-bottom:0.5rem">Click a machine in the legend to hide/show its line.</div>
+                <div id="chart-trend-empty" style="display:none;padding:2rem;text-align:center;color:#888">No time entries recorded.</div>
+                <div style="position:relative;height:340px"><canvas id="chart-trend"></canvas></div>
+            </div>
+
+            <div class="analytics-chart-container">
+                <h3>Daily Detail — This Week</h3>
+                <div style="overflow-x:auto;">
+                    <table class="perf-table time-grid" id="time-daily">
+                        <thead><tr><th>Machine</th><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th><th>Sun</th><th>Total</th></tr></thead>
+                        <tbody id="time-daily-body"><tr><td colspan="9" style="text-align:center;color:#888">Loading...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="analytics-chart-container">
+                <h3>Machine Utilization — Activity Breakdown</h3>
+                <table class="perf-table time-grid" id="time-by-machine">
+                    <thead><tr><th>Machine</th><th>Setup</th><th>Run</th><th>Reset</th><th>Repair</th><th>Wait Tool</th><th>Other</th><th>Total</th></tr></thead>
+                    <tbody id="time-by-machine-body"><tr><td colspan="8" style="text-align:center;color:#888">Loading...</td></tr></tbody>
                 </table>
+            </div>
+
+            <div class="analytics-chart-container">
+                <h3>Operator Summary</h3>
+                <table class="perf-table time-grid" id="time-by-operator">
+                    <thead><tr><th>Initials</th><th>Setup</th><th>Run</th><th>Reset</th><th>Repair</th><th>Wait Tool</th><th>Other</th><th>Total</th></tr></thead>
+                    <tbody id="time-by-operator-body"><tr><td colspan="8" style="text-align:center;color:#888">Loading...</td></tr></tbody>
+                </table>
+            </div>
+
+            <div class="analytics-chart-container">
+                <h3>Operator &times; Machine</h3>
+                <div style="overflow-x:auto;">
+                    <table class="perf-table time-grid" id="time-op-machine">
+                        <thead id="time-op-machine-head"></thead>
+                        <tbody id="time-op-machine-body"><tr><td style="text-align:center;color:#888">Loading...</td></tr></tbody>
+                    </table>
+                </div>
             </div>
         </div>
     </div>
@@ -1315,6 +1385,206 @@
                 }).join('');
                 return '<tr><td><strong>' + op + '</strong></td>' + cells + '<td><strong>' + rowTotal.toFixed(2) + '</strong></td></tr>';
             }).join('');
+
+            // Summary cards
+            const totalHours = (data.by_machine || []).reduce((s, r) => s + (r.total || 0), 0);
+            const machinesActive = (data.by_machine || []).filter(r => r.total > 0).length;
+            const operatorsActive = (data.by_operator || []).filter(r => r.total > 0).length;
+            document.getElementById('time-stat-total').textContent = totalHours.toFixed(1);
+            document.getElementById('time-stat-machines').textContent = machinesActive;
+            document.getElementById('time-stat-operators').textContent = operatorsActive;
+
+            // Top downtime category (excluding Run)
+            const downCats = { setup: 0, reset: 0, repair: 0, wait_tool: 0, other: 0 };
+            (data.by_machine || []).forEach(r => {
+                downCats.setup += r.setup || 0;
+                downCats.reset += r.reset || 0;
+                downCats.repair += r.repair || 0;
+                downCats.wait_tool += r.wait_tool || 0;
+                downCats.other += r.other || 0;
+            });
+            const downLabels = { setup: 'Setup', reset: 'Reset', repair: 'Repair', wait_tool: 'Wait Tool', other: 'Other' };
+            let topKey = null, topVal = 0;
+            for (const [k, v] of Object.entries(downCats)) {
+                if (v > topVal) { topVal = v; topKey = k; }
+            }
+            if (topKey && topVal > 0) {
+                document.getElementById('time-stat-downtime').textContent = topVal.toFixed(1) + 'h';
+                document.getElementById('time-stat-downtime-label').textContent = 'Top Downtime: ' + downLabels[topKey];
+            } else {
+                document.getElementById('time-stat-downtime').textContent = '0h';
+                document.getElementById('time-stat-downtime-label').textContent = 'Top Downtime';
+            }
+
+            // Daily detail table (rows = machines, cols = Mon-Sun + Total)
+            const daily = data.by_machine_by_day || [];
+            const dailyBody = document.getElementById('time-daily-body');
+            const dayCols = ['mon','tue','wed','thu','fri','sat','sun'];
+            if (!daily.length) {
+                dailyBody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#888">No time entries this week</td></tr>';
+            } else {
+                const totals = { mon:0, tue:0, wed:0, thu:0, fri:0, sat:0, sun:0, total:0 };
+                dailyBody.innerHTML = daily.map(r => {
+                    dayCols.forEach(d => totals[d] += r[d] || 0);
+                    totals.total += r.total || 0;
+                    return '<tr><td><strong>Mach ' + r.machine + '</strong></td>' +
+                        dayCols.map(d => '<td>' + (r[d] || '') + '</td>').join('') +
+                        '<td><strong>' + r.total + '</strong></td></tr>';
+                }).join('') +
+                '<tr style="font-weight:700;border-top:2px solid var(--gent-blue);background:#fafafa">' +
+                    '<td>SHOP TOTAL</td>' +
+                    dayCols.map(d => '<td>' + totals[d].toFixed(2) + '</td>').join('') +
+                    '<td>' + totals.total.toFixed(2) + '</td></tr>';
+            }
+
+            // Chart 1: Machine Workload Overview (horizontal stacked bar, current week)
+            renderMachineWorkloadChart(data);
+        }
+
+        // ---- Chart 1: Machine Workload Overview ----
+        let machineWorkloadChart = null;
+        const ACTIVITY_COLORS = {
+            run:       '#28A745',
+            setup:     '#00528A',
+            reset:     '#F3802B',
+            repair:    '#DC3545',
+            wait_tool: '#FFC107',
+            other:     '#6c757d',
+        };
+        const ACTIVITY_LABELS = {
+            run: 'Run', setup: 'Setup', reset: 'Reset',
+            repair: 'Repair', wait_tool: 'Wait Tool', other: 'Other',
+        };
+
+        function renderMachineWorkloadChart(data) {
+            const canvas = document.getElementById('chart-machine-workload');
+            const empty = document.getElementById('chart-machine-workload-empty');
+            const rows = (data.by_machine || []).filter(r => r.total > 0);
+            if (!rows.length) {
+                if (machineWorkloadChart) { machineWorkloadChart.destroy(); machineWorkloadChart = null; }
+                canvas.style.display = 'none';
+                empty.style.display = '';
+                return;
+            }
+            canvas.style.display = '';
+            empty.style.display = 'none';
+
+            const labels = rows.map(r => 'Mach ' + r.machine);
+            const categories = ['run','setup','reset','repair','wait_tool','other'];
+            const datasets = categories.map(cat => ({
+                label: ACTIVITY_LABELS[cat],
+                data: rows.map(r => r[cat] || 0),
+                backgroundColor: ACTIVITY_COLORS[cat],
+            }));
+
+            if (machineWorkloadChart) machineWorkloadChart.destroy();
+            machineWorkloadChart = new Chart(canvas.getContext('2d'), {
+                type: 'bar',
+                data: { labels, datasets },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'bottom' },
+                        tooltip: { callbacks: { label: (ctx) => ctx.dataset.label + ': ' + ctx.parsed.x + 'h' } },
+                    },
+                    scales: {
+                        x: { stacked: true, title: { display: true, text: 'Hours' } },
+                        y: { stacked: true },
+                    },
+                },
+            });
+        }
+
+        // ---- Chart 2: Weekly Trends — Hours per Machine ----
+        let trendChart = null;
+        // Distinct-ish color palette for machine lines (cycles if >12 machines)
+        const TREND_PALETTE = [
+            '#00528A', '#F3802B', '#28A745', '#DC3545', '#6610f2', '#20c997',
+            '#fd7e14', '#e83e8c', '#17a2b8', '#6c757d', '#8B4513', '#4B0082',
+        ];
+
+        async function loadTimeTrend() {
+            try {
+                const resp = await fetch(API_BASE + '/analytics/time/trend?weeks=8', { headers: authHeaders() });
+                if (!resp.ok) throw new Error('API error ' + resp.status);
+                const data = await resp.json();
+                renderTrendChart(data);
+            } catch (err) {
+                document.getElementById('chart-trend-empty').textContent = 'Failed to load: ' + err.message;
+                document.getElementById('chart-trend-empty').style.display = '';
+                document.getElementById('chart-trend').style.display = 'none';
+            }
+        }
+
+        function renderTrendChart(data) {
+            const canvas = document.getElementById('chart-trend');
+            const empty = document.getElementById('chart-trend-empty');
+            const machines = data.machines || [];
+            if (!machines.length) {
+                if (trendChart) { trendChart.destroy(); trendChart = null; }
+                canvas.style.display = 'none';
+                empty.style.display = '';
+                return;
+            }
+            canvas.style.display = '';
+            empty.style.display = 'none';
+
+            const weekLabels = (data.weeks || []).map(w => {
+                const d = new Date(w + 'T00:00:00Z');
+                return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+            });
+            const datasets = machines.map((m, i) => {
+                const color = TREND_PALETTE[i % TREND_PALETTE.length];
+                return {
+                    label: 'Mach ' + m.machine,
+                    data: m.totals,
+                    borderColor: color,
+                    backgroundColor: color,
+                    tension: 0.15,
+                    pointRadius: 3,
+                };
+            });
+
+            if (trendChart) trendChart.destroy();
+            trendChart = new Chart(canvas.getContext('2d'), {
+                type: 'line',
+                data: { labels: weekLabels, datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'bottom' },
+                        tooltip: { callbacks: { label: (ctx) => ctx.dataset.label + ': ' + ctx.parsed.y + 'h' } },
+                    },
+                    scales: {
+                        y: { title: { display: true, text: 'Hours' }, beginAtZero: true },
+                        x: { title: { display: true, text: 'Week Starting' } },
+                    },
+                },
+            });
+        }
+
+        // ---- Sub-tab switching ----
+        let timeTrendLoaded = false;
+        function switchAnalyticsTab(which) {
+            const appTab = document.getElementById('sub-tab-app');
+            const timeTab = document.getElementById('sub-tab-time');
+            const appPanel = document.getElementById('app-usage-tab');
+            const timePanel = document.getElementById('time-machines-tab');
+            if (which === 'time') {
+                timeTab.classList.add('active');
+                appTab.classList.remove('active');
+                timePanel.style.display = '';
+                appPanel.style.display = 'none';
+                if (!timeTrendLoaded) { loadTimeTrend(); timeTrendLoaded = true; }
+            } else {
+                appTab.classList.add('active');
+                timeTab.classList.remove('active');
+                appPanel.style.display = '';
+                timePanel.style.display = 'none';
+            }
         }
 
         function renderAnalytics(data) {
