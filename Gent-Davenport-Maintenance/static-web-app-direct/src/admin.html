@@ -364,15 +364,25 @@
         <div>
             <label for="filter-rating">Rating</label>
             <select id="filter-rating">
+                <option value="" selected>All feedback</option>
                 <option value="flagged">&#9873; Flagged only</option>
                 <option value="thumbs_down">&#128078; Thumbs down</option>
-                <option value="">All feedback</option>
                 <option value="thumbs_up">&#128077; Thumbs up</option>
             </select>
         </div>
         <div>
-            <label for="filter-date">Date (optional)</label>
-            <input type="date" id="filter-date" onkeydown="if(event.key==='Enter')loadFeedback()">
+            <label for="filter-start">From</label>
+            <input type="date" id="filter-start" onkeydown="if(event.key==='Enter')loadFeedback()">
+        </div>
+        <div>
+            <label for="filter-end">To</label>
+            <input type="date" id="filter-end" onkeydown="if(event.key==='Enter')loadFeedback()">
+        </div>
+        <div>
+            <label style="display:flex;align-items:center;gap:0.4rem;margin-bottom:4px;font-size:14px;color:#555;">
+                <input type="checkbox" id="filter-all-time" style="margin:0"> Show all time
+            </label>
+            <div style="font-size:11px;color:#888;max-width:160px">Default window is last 30 days when dates are blank.</div>
         </div>
         <button class="load-btn" onclick="loadFeedback()">Load</button>
     </div>
@@ -563,9 +573,7 @@
             }
         }
 
-        // Set today's date as default
-        const today = new Date().toISOString().split('T')[0];
-        document.getElementById('filter-date').value = today;
+        // Date filter defaults to blank — user picks a date to narrow results
 
         const RATING_LABELS = {
             flagged:     '&#9873; Flagged',
@@ -574,8 +582,10 @@
         };
 
         async function loadFeedback() {
-            const rating = document.getElementById('filter-rating').value;
-            const date   = document.getElementById('filter-date').value;
+            const rating  = document.getElementById('filter-rating').value;
+            const start   = document.getElementById('filter-start').value;
+            const end     = document.getElementById('filter-end').value;
+            const allTime = document.getElementById('filter-all-time').checked;
 
             const listEl  = document.getElementById('feedback-list');
             const statsEl = document.getElementById('stats-bar');
@@ -583,8 +593,10 @@
             statsEl.style.display = 'none';
 
             const params = new URLSearchParams();
-            if (rating) params.set('rating', rating);
-            if (date)   params.set('date', date);
+            if (rating)  params.set('rating', rating);
+            if (start)   params.set('start', start);
+            if (end)     params.set('end', end);
+            if (allTime) params.set('all', 'true');
 
             try {
                 const res  = await fetch(`${API_BASE}/feedback?${params}`, {
@@ -598,8 +610,8 @@
                     return;
                 }
 
-                // Sort newest first
-                data.sort((a, b) => b.id.localeCompare(a.id));
+                // Backend sorts newest first; keep a client-side fallback sort by timestamp/date desc
+                data.sort((a, b) => (b.timestamp || b.date || '').localeCompare(a.timestamp || a.date || ''));
 
                 // Stats breakdown by rating type
                 const counts = { flagged: 0, thumbs_down: 0, thumbs_up: 0 };
@@ -627,7 +639,16 @@
         function buildCard(item, i) {
             const ratingClass = `badge-${item.rating}`;
             const ratingLabel = RATING_LABELS[item.rating] || item.rating;
-            const dateStr = item.id ? item.id.replace('T', ' ').substring(0, 15) : item.date;
+            // Prefer the exact submit timestamp from Table Storage; fall back to the PartitionKey date
+            let dateStr = item.date || '';
+            if (item.timestamp) {
+                try {
+                    const d = new Date(item.timestamp);
+                    if (!isNaN(d)) {
+                        dateStr = d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+                    }
+                } catch {}
+            }
             const initialsDisplay = item.initials ? `<strong>${escHtml(item.initials)}</strong>` : '<em style="color:#888">no initials</em>';
             const who = `by <span id="initials-${i}">${initialsDisplay}</span> <button class="edit-initials-btn" onclick="editInitials(${i}, '${item.date}', '${escHtml(item.id)}')" title="Edit initials">&#9998;</button>`;
             const user = item.username ? ` (${escHtml(item.username)})` : '';
@@ -668,12 +689,6 @@
                     </div>
                     <div class="card-actions">
                         ${convoBtn}
-                        <button class="action-btn" onclick="copyToClipboard('${escHtml(item.message || '')}', '${escHtml(item.response || '')}')">
-                            &#128203; Copy Q&amp;A
-                        </button>
-                        <a href="index.html" target="_blank" class="action-btn" style="text-decoration:none">
-                            &#128172; Open Chat
-                        </a>
                     </div>
                     <div class="convo-panel" id="convo-${i}" style="display:none"></div>
                 </div>`;

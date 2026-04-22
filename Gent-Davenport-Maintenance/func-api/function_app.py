@@ -1780,26 +1780,47 @@ async def submit_feedback(req: Request) -> JSONResponse:
 async def get_feedback(req: Request) -> JSONResponse:
     """Retrieve feedback entries for admin review.
 
-    Optional query params: ?rating=flagged&date=2026-02-25
+    Query params:
+      ?rating=flagged|thumbs_up|thumbs_down  (optional)
+      ?date=YYYY-MM-DD                       (exact date, backward compat)
+      ?start=YYYY-MM-DD&end=YYYY-MM-DD       (inclusive date range)
+      ?all=true                              (override default 30-day window)
+
+    If no date filter is provided, defaults to last 30 days for performance.
     """
-    # Fix #3: Admin-only — feedback contains all user conversations
     auth_result = auth_helper.require_admin(req)
     if isinstance(auth_result, JSONResponse):
         return auth_result
 
     rating_filter = req.query_params.get("rating")
     date_filter = req.query_params.get("date")
+    start_filter = req.query_params.get("start")
+    end_filter = req.query_params.get("end")
+    show_all = req.query_params.get("all", "").lower() == "true"
 
-    # Fix #2: Validate inputs to prevent OData injection
+    # Validate inputs to prevent OData injection
     valid_ratings = {"thumbs_up", "thumbs_down", "flagged"}
     if rating_filter and rating_filter not in valid_ratings:
         return JSONResponse({"error": "Invalid rating filter"}, status_code=400)
-    if date_filter and not re.match(r"^\d{4}-\d{2}-\d{2}$", date_filter):
-        return JSONResponse({"error": "Invalid date format, use YYYY-MM-DD"}, status_code=400)
+    for val, name in [(date_filter, "date"), (start_filter, "start"), (end_filter, "end")]:
+        if val and not re.match(r"^\d{4}-\d{2}-\d{2}$", val):
+            return JSONResponse({"error": f"Invalid {name} format, use YYYY-MM-DD"}, status_code=400)
 
     filters = []
+    window_note = None
     if date_filter:
         filters.append(f"PartitionKey eq '{date_filter}'")
+    else:
+        if start_filter:
+            filters.append(f"PartitionKey ge '{start_filter}'")
+        if end_filter:
+            filters.append(f"PartitionKey le '{end_filter}'")
+        # Default to last 30 days if no date filter at all and not show_all
+        if not start_filter and not end_filter and not show_all:
+            default_start = (datetime.now(timezone.utc).date() - timedelta(days=30)).strftime("%Y-%m-%d")
+            filters.append(f"PartitionKey ge '{default_start}'")
+            window_note = f"last 30 days (from {default_start})"
+
     if rating_filter:
         filters.append(f"rating eq '{rating_filter}'")
     query_filter = " and ".join(filters) if filters else None
@@ -1807,10 +1828,21 @@ async def get_feedback(req: Request) -> JSONResponse:
     try:
         table = get_table_client()
         entities = list(table.query_entities(query_filter=query_filter))
-        results = [
-            {
+        results = []
+        for entity in entities:
+            # Extract Timestamp — exact submit time (Azure Table Storage auto-field)
+            ts = None
+            try:
+                md = getattr(entity, "metadata", None) or {}
+                t = md.get("timestamp") if isinstance(md, dict) else None
+                if t is not None:
+                    ts = t.isoformat() if hasattr(t, "isoformat") else str(t)
+            except Exception:
+                ts = None
+            results.append({
                 "date": entity.get("PartitionKey"),
                 "id": entity.get("RowKey"),
+                "timestamp": ts,
                 "conversation_id": entity.get("conversation_id"),
                 "message": entity.get("message"),
                 "response": entity.get("response"),
@@ -1820,10 +1852,11 @@ async def get_feedback(req: Request) -> JSONResponse:
                 "username": entity.get("username", ""),
                 "reasoning_level": entity.get("reasoning_level"),
                 "conversation_history": entity.get("conversation_history", "[]"),
-            }
-            for entity in entities
-        ]
-        return JSONResponse(results, status_code=200)
+            })
+        # Sort newest first (by timestamp if available, else by date)
+        results.sort(key=lambda r: (r.get("timestamp") or r.get("date") or ""), reverse=True)
+        headers = {"X-Window-Note": window_note} if window_note else {}
+        return JSONResponse(results, status_code=200, headers=headers)
     except Exception as e:
         logging.error(f"Failed to get feedback: {str(e)}")
         return JSONResponse({"error": "Failed to retrieve feedback"}, status_code=500)
@@ -2355,6 +2388,20 @@ async def submit_time_entry(req: Request) -> JSONResponse:
         table = get_table_client("timeentries")
         table.create_entity(entity)
         logging.info(f"Time entry saved: {date_str} {initials} machine {machine}")
+
+        # Also stream to data lake for Power BI / analytics / agents (fire-and-forget)
+        log_to_lake("time_entries", {
+            "timestamp": now.isoformat(),
+            "date": date_str,
+            "initials": initials,
+            "username": display_name,
+            "machine": machine,
+            **hours,
+            "total_hours": round(sum(hours.values()), 2),
+            "notes": notes,
+            "row_key": row_key,
+        })
+
         return JSONResponse({"status": "saved", "id": row_key, **entity}, status_code=201)
     except Exception as e:
         logging.error(f"Failed to save time entry: {e}")
@@ -2438,12 +2485,11 @@ async def list_time_entries(req: Request) -> JSONResponse:
 
 @app.route(route="time-entries/{partition_key}/{row_key}", methods=["DELETE"])
 async def delete_time_entry(req: Request) -> JSONResponse:
-    """Delete a time entry. Users can delete their own; admins can delete any."""
-    auth_result = auth_helper.require_auth(req)
+    """Delete a time entry. Admin-only."""
+    auth_result = auth_helper.require_admin(req)
     if isinstance(auth_result, JSONResponse):
         return auth_result
     display_name = auth_result.get("display_name", auth_result.get("sub", ""))
-    is_admin = auth_result.get("role") == "admin"
 
     partition_key = req.path_params.get("partition_key", "")
     row_key = req.path_params.get("row_key", "")
@@ -2455,12 +2501,22 @@ async def delete_time_entry(req: Request) -> JSONResponse:
 
     try:
         table = get_table_client("timeentries")
-        # Check ownership before deleting (unless admin)
-        if not is_admin:
-            entity = table.get_entity(partition_key=partition_key, row_key=row_key)
-            if entity.get("username") != display_name:
-                return JSONResponse({"error": "Forbidden"}, status_code=403)
+        # Get existing entity for audit log
+        entity = table.get_entity(partition_key=partition_key, row_key=row_key)
         table.delete_entity(partition_key=partition_key, row_key=row_key)
+
+        # Log deletion to lake for audit trail
+        log_to_lake("time_entries", {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "event": "deleted",
+            "date": partition_key,
+            "initials": entity.get("initials", ""),
+            "username": entity.get("username", ""),
+            "deleted_by": display_name,
+            "machine": entity.get("machine"),
+            "row_key": row_key,
+        })
+
         return JSONResponse({"status": "deleted"}, status_code=200)
     except Exception as e:
         logging.error(f"Failed to delete time entry: {e}")

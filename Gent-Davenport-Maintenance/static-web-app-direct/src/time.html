@@ -262,6 +262,7 @@
 
         // Header display name + initials default from login
         const claims = getTokenClaims();
+        const isAdmin = claims.role === 'admin';
         document.getElementById('user-display-name').textContent = claims.display_name || '';
         // Prefill initials: first 2-3 chars of display_name, uppercase
         const displayName = (claims.display_name || '').trim();
@@ -372,7 +373,7 @@
                         <td class="num">${r.wait_tool || ''}</td>
                         <td class="num">${r.other || ''}</td>
                         <td>${escHtml(r.notes || '')}</td>
-                        <td><button class="delete-btn" onclick="deleteEntry('${r.date}','${r.id}')">Delete</button></td>
+                        <td>${isAdmin ? `<button class="delete-btn" onclick="deleteEntry('${r.date}','${r.id}')">Delete</button>` : ''}</td>
                     </tr>
                 `).join('');
             } catch (e) {
