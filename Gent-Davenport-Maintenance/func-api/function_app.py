@@ -2712,6 +2712,90 @@ async def list_time_entries(req: Request) -> JSONResponse:
         return JSONResponse({"error": "Failed to list time entries"}, status_code=500)
 
 
+@app.route(route="time-entries/{partition_key}/{row_key}", methods=["PUT"])
+async def update_time_entry(req: Request) -> JSONResponse:
+    """Update a time entry. Admin-only.
+
+    Body: any of {setup, run, reset, repair, wait_tool, other, notes, initials, machine}.
+    Hours are validated (0-24, numeric). Machine must be an integer 1-50.
+    """
+    auth_result = auth_helper.require_admin(req)
+    if isinstance(auth_result, JSONResponse):
+        return auth_result
+    display_name = auth_result.get("display_name", auth_result.get("sub", ""))
+
+    partition_key = req.path_params.get("partition_key", "")
+    row_key = req.path_params.get("row_key", "")
+
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", partition_key):
+        return JSONResponse({"error": "Invalid partition_key"}, status_code=400)
+    if not row_key or len(row_key) > 200:
+        return JSONResponse({"error": "Invalid row_key"}, status_code=400)
+
+    try:
+        body = await req.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+    # Build the merge payload — only include fields that were provided
+    update = {"PartitionKey": partition_key, "RowKey": row_key}
+
+    # Validate hour fields
+    for f in _HOUR_FIELDS:
+        if f in body:
+            try:
+                update[f] = _parse_hours(body.get(f))
+            except ValueError as e:
+                return JSONResponse({"error": str(e)}, status_code=400)
+
+    if "notes" in body:
+        update["notes"] = (body.get("notes") or "")[:500]
+
+    if "initials" in body:
+        initials = (body.get("initials") or "").strip()[:20]
+        if not initials:
+            return JSONResponse({"error": "initials cannot be empty"}, status_code=400)
+        update["initials"] = initials
+
+    if "machine" in body:
+        try:
+            m = int(body.get("machine"))
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "machine must be an integer"}, status_code=400)
+        if m < 1 or m > 50:
+            return JSONResponse({"error": "machine must be between 1 and 50"}, status_code=400)
+        update["machine"] = m
+
+    if len(update) <= 2:  # only the keys, no actual changes
+        return JSONResponse({"error": "No fields to update"}, status_code=400)
+
+    try:
+        table = get_table_client("timeentries")
+        # Fetch existing for audit + fallback values
+        existing = table.get_entity(partition_key=partition_key, row_key=row_key)
+
+        from azure.data.tables import UpdateMode
+        table.update_entity(update, mode=UpdateMode.MERGE)
+
+        # Audit log
+        log_to_lake("time_entries", {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "event": "edited",
+            "date": partition_key,
+            "initials": update.get("initials", existing.get("initials", "")),
+            "username": existing.get("username", ""),
+            "edited_by": display_name,
+            "machine": update.get("machine", existing.get("machine")),
+            "changes": {k: v for k, v in update.items() if k not in ("PartitionKey", "RowKey")},
+            "row_key": row_key,
+        })
+
+        return JSONResponse({"status": "updated"}, status_code=200)
+    except Exception as e:
+        logging.error(f"Failed to update time entry: {e}")
+        return JSONResponse({"error": "Failed to update time entry"}, status_code=500)
+
+
 @app.route(route="time-entries/{partition_key}/{row_key}", methods=["DELETE"])
 async def delete_time_entry(req: Request) -> JSONResponse:
     """Delete a time entry. Admin-only."""

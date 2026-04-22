@@ -189,6 +189,60 @@
             cursor: pointer;
         }
         .recent-table .delete-btn:hover { background: #ffe0e0; }
+        .recent-table .edit-btn {
+            padding: 0.2rem 0.5rem;
+            background: transparent;
+            color: var(--gent-blue);
+            border: 1px solid var(--gent-blue);
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            margin-right: 4px;
+        }
+        .recent-table .edit-btn:hover { background: var(--aidan-light-green); }
+        .recent-table input.edit-hrs {
+            width: 50px;
+            padding: 0.2rem;
+            border: 1px solid var(--gent-orange);
+            border-radius: 3px;
+            font-size: 13px;
+            text-align: center;
+        }
+        .recent-table input.edit-notes {
+            width: 100%;
+            min-width: 120px;
+            padding: 0.2rem 0.4rem;
+            border: 1px solid var(--gent-orange);
+            border-radius: 3px;
+            font-size: 12px;
+        }
+        .recent-table input.edit-machine {
+            width: 50px;
+            padding: 0.2rem;
+            border: 1px solid var(--gent-orange);
+            border-radius: 3px;
+            font-size: 13px;
+            text-align: center;
+        }
+        .recent-table .save-btn {
+            padding: 0.2rem 0.5rem;
+            background: var(--gent-blue);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            margin-right: 4px;
+        }
+        .recent-table .cancel-btn {
+            padding: 0.2rem 0.5rem;
+            background: white;
+            color: #555;
+            border: 1px solid #aaa;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+        }
 
         .empty-msg { padding: 2rem; text-align: center; color: #888; }
         .err-msg { padding: 1rem; color: #c00; }
@@ -259,10 +313,27 @@
         </div>
 
         <div class="section">
-            <div class="section-header">My Recent Entries (last 7 days)</div>
+            <div class="section-header" id="recent-header">My Recent Entries</div>
+            <div class="entry-meta" style="border-bottom:1px solid var(--border-light);padding:0.75rem 1rem;">
+                <div>
+                    <label for="recent-from">From</label>
+                    <input type="date" id="recent-from" style="width:150px">
+                </div>
+                <div>
+                    <label for="recent-to">To</label>
+                    <input type="date" id="recent-to" style="width:150px">
+                </div>
+                <div>
+                    <label style="display:flex;align-items:center;gap:0.4rem;margin-bottom:4px;font-size:13px;color:#555;">
+                        <input type="checkbox" id="recent-all-time" style="margin:0"> Show all time
+                    </label>
+                    <div style="font-size:11px;color:#888;max-width:160px">Default: last 7 days when dates are blank.</div>
+                </div>
+                <button class="row-save-btn" style="padding:0.5rem 1.25rem;" onclick="loadRecent()">Load</button>
+            </div>
             <table class="recent-table">
                 <thead>
-                    <tr><th>Date</th><th>Mach</th><th>Setup</th><th>Run</th><th>Reset</th><th>Repair</th><th>Wait</th><th>Other</th><th>Notes</th><th></th></tr>
+                    <tr><th>Date</th><th>Mach</th><th>Setup</th><th>Run</th><th>Reset</th><th>Repair</th><th>Wait</th><th>Other</th><th>Notes</th><th id="actions-header"></th></tr>
                 </thead>
                 <tbody id="recent-body">
                     <tr><td colspan="10" class="empty-msg">Loading...</td></tr>
@@ -394,21 +465,71 @@
             }
         }
 
+        // Cache raw entries so we can re-render rows when toggling edit mode
+        let recentRows = [];
+
         async function loadRecent() {
             const tbody = document.getElementById('recent-body');
+            const header = document.getElementById('recent-header');
+            const from = document.getElementById('recent-from').value;
+            const to = document.getElementById('recent-to').value;
+            const allTime = document.getElementById('recent-all-time').checked;
+
+            const params = new URLSearchParams();
+            if (from) params.set('start', from);
+            if (to)   params.set('end', to);
+            // If neither from nor to and not all-time, backend defaults to last 7 days
+
+            let rangeLabel = 'last 7 days';
+            if (from && to)      rangeLabel = `${from} to ${to}`;
+            else if (from)       rangeLabel = `from ${from}`;
+            else if (to)         rangeLabel = `up to ${to}`;
+            else if (allTime)    rangeLabel = 'all time';
+            header.textContent = (isAdmin ? 'All Time Entries' : 'My Recent Entries') + ' — ' + rangeLabel;
+
+            // When "Show all time" is checked, we want to skip the default 7-day window.
+            // Backend honors explicit start/end; send start=1970-01-01 as a broad range.
+            if (allTime && !from && !to) {
+                params.set('start', '2020-01-01');
+            }
+
             try {
-                const resp = await fetch(API_BASE + '/time-entries', { headers: authHeaders() });
-                if (resp.status === 401) {
-                    signOut();
-                    return;
-                }
+                const resp = await fetch(API_BASE + '/time-entries?' + params.toString(), { headers: authHeaders() });
+                if (resp.status === 401) { signOut(); return; }
                 if (!resp.ok) throw new Error('HTTP ' + resp.status);
-                const rows = await resp.json();
-                if (!rows.length) {
-                    tbody.innerHTML = '<tr><td colspan="10" class="empty-msg">No entries in the last 7 days.</td></tr>';
-                    return;
+                recentRows = await resp.json();
+                renderRecentRows();
+            } catch (e) {
+                tbody.innerHTML = '<tr><td colspan="10" class="err-msg">Failed to load: ' + e.message + '</td></tr>';
+            }
+        }
+
+        function renderRecentRows(editingId) {
+            const tbody = document.getElementById('recent-body');
+            if (!recentRows.length) {
+                tbody.innerHTML = '<tr><td colspan="10" class="empty-msg">No entries in this range.</td></tr>';
+                return;
+            }
+            tbody.innerHTML = recentRows.map(r => {
+                if (editingId === r.id) {
+                    return `
+                        <tr>
+                            <td>${r.date}</td>
+                            <td><input class="edit-machine" type="number" min="1" max="50" value="${r.machine}" id="edit-m-${r.id}"></td>
+                            ${HOUR_FIELDS.map(f => `<td><input class="edit-hrs" type="number" min="0" max="24" step="0.25" value="${r[f] || 0}" id="edit-${f}-${r.id}"></td>`).join('')}
+                            <td><input class="edit-notes" type="text" value="${escHtml(r.notes || '')}" id="edit-notes-${r.id}" maxlength="500"></td>
+                            <td>
+                                <button class="save-btn" onclick="saveEntry('${r.date}','${r.id}')">Save</button>
+                                <button class="cancel-btn" onclick="renderRecentRows()">Cancel</button>
+                            </td>
+                        </tr>
+                    `;
                 }
-                tbody.innerHTML = rows.map(r => `
+                const actions = isAdmin
+                    ? `<button class="edit-btn" onclick="renderRecentRows('${r.id}')">Edit</button>` +
+                      `<button class="delete-btn" onclick="deleteEntry('${r.date}','${r.id}')">Delete</button>`
+                    : '';
+                return `
                     <tr>
                         <td>${r.date}</td>
                         <td><strong>${r.machine}</strong></td>
@@ -419,11 +540,35 @@
                         <td class="num">${r.wait_tool || ''}</td>
                         <td class="num">${r.other || ''}</td>
                         <td>${escHtml(r.notes || '')}</td>
-                        <td>${isAdmin ? `<button class="delete-btn" onclick="deleteEntry('${r.date}','${r.id}')">Delete</button>` : ''}</td>
+                        <td>${actions}</td>
                     </tr>
-                `).join('');
+                `;
+            }).join('');
+        }
+
+        async function saveEntry(date, id) {
+            const payload = {
+                machine: parseInt(document.getElementById(`edit-m-${id}`).value, 10),
+                notes: document.getElementById(`edit-notes-${id}`).value,
+            };
+            for (const f of HOUR_FIELDS) {
+                const el = document.getElementById(`edit-${f}-${id}`);
+                const v = el.value;
+                payload[f] = v === '' ? 0 : parseFloat(v);
+            }
+            try {
+                const resp = await fetch(`${API_BASE}/time-entries/${encodeURIComponent(date)}/${encodeURIComponent(id)}`, {
+                    method: 'PUT',
+                    headers: authHeaders(),
+                    body: JSON.stringify(payload),
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    throw new Error(err.error || 'HTTP ' + resp.status);
+                }
+                await loadRecent();
             } catch (e) {
-                tbody.innerHTML = '<tr><td colspan="10" class="err-msg">Failed to load: ' + e.message + '</td></tr>';
+                alert('Failed to save: ' + e.message);
             }
         }
 
