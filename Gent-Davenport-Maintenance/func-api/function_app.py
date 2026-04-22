@@ -94,9 +94,11 @@ def get_clients():
 
 
 def get_table_client(table_name="feedback"):
-    """Get or create Azure Table Storage client (cached)."""
+    """Get or create Azure Table Storage client (cached per table name)."""
     global _table_client
     if _table_client is None:
+        _table_client = {}
+    if table_name not in _table_client:
         from azure.data.tables import TableServiceClient
         credential = DefaultAzureCredential()
         service = TableServiceClient(
@@ -105,8 +107,8 @@ def get_table_client(table_name="feedback"):
         )
         # Create table if it doesn't exist (idempotent)
         service.create_table_if_not_exists(table_name)
-        _table_client = service.get_table_client(table_name)
-    return _table_client
+        _table_client[table_name] = service.get_table_client(table_name)
+    return _table_client[table_name]
 
 
 def get_blob_service_client():
@@ -1827,6 +1829,50 @@ async def get_feedback(req: Request) -> JSONResponse:
         return JSONResponse({"error": "Failed to retrieve feedback"}, status_code=500)
 
 
+@app.route(route="feedback/{partition_key}/{row_key}", methods=["PATCH"])
+async def update_feedback(req: Request) -> JSONResponse:
+    """Update editable fields on a feedback entry (admin only).
+
+    Currently supports updating initials only — Rich uses this to fix
+    entries where a machinist forgot to enter their initials.
+    """
+    auth_result = auth_helper.require_admin(req)
+    if isinstance(auth_result, JSONResponse):
+        return auth_result
+
+    partition_key = req.path_params.get("partition_key", "")
+    row_key = req.path_params.get("row_key", "")
+
+    # Validate partition key is a date (prevents OData injection)
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", partition_key):
+        return JSONResponse({"error": "Invalid partition_key"}, status_code=400)
+    if not row_key or len(row_key) > 200:
+        return JSONResponse({"error": "Invalid row_key"}, status_code=400)
+
+    try:
+        body = await req.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+    initials = body.get("initials", "").strip()[:20]
+    if not initials:
+        return JSONResponse({"error": "initials is required"}, status_code=400)
+
+    try:
+        table = get_table_client()
+        from azure.data.tables import UpdateMode
+        # Merge update — only changes initials, preserves all other fields
+        table.update_entity(
+            {"PartitionKey": partition_key, "RowKey": row_key, "initials": initials},
+            mode=UpdateMode.MERGE,
+        )
+        logging.info(f"Feedback initials updated: {partition_key}/{row_key} -> {initials}")
+        return JSONResponse({"status": "updated", "initials": initials}, status_code=200)
+    except Exception as e:
+        logging.error(f"Failed to update feedback: {str(e)}")
+        return JSONResponse({"error": "Failed to update feedback"}, status_code=500)
+
+
 # ---------------------------------------------------------------------------
 # Voice memo endpoint — save audio recordings for later transcription
 # ---------------------------------------------------------------------------
@@ -2023,6 +2069,69 @@ async def analytics_summary(req: Request) -> JSONResponse:
         return JSONResponse({"error": "Failed to generate analytics"}, status_code=500)
 
 
+@app.route(route="analytics/by-user", methods=["GET"])
+async def analytics_by_user(req: Request) -> JSONResponse:
+    """Feedback counts grouped by initials + ISO week.
+
+    Admin-only. Query param: ?weeks=4 (default 4, max 12).
+    Returns rows like: {initials, week, total, thumbs_up, thumbs_down, flagged}
+    Reads from the feedback table (not JSONL) since initials lives there.
+    """
+    auth_result = auth_helper.require_admin(req)
+    if isinstance(auth_result, JSONResponse):
+        return auth_result
+
+    try:
+        weeks = int(req.query_params.get("weeks", "4"))
+    except ValueError:
+        weeks = 4
+    weeks = max(1, min(weeks, 12))
+
+    try:
+        # Date range: last N weeks
+        today = datetime.now(timezone.utc).date()
+        start_date = today - timedelta(weeks=weeks)
+        start_str = start_date.strftime("%Y-%m-%d")
+
+        table = get_table_client()
+        # PartitionKey is the date — filter by range
+        entities = list(table.query_entities(
+            query_filter=f"PartitionKey ge '{start_str}'"
+        ))
+
+        # Group: {(initials, week): {total, thumbs_up, thumbs_down, flagged}}
+        groups = {}
+        for e in entities:
+            initials = (e.get("initials") or "").strip() or "(none)"
+            date_str = e.get("PartitionKey", "")
+            try:
+                d = datetime.strptime(date_str, "%Y-%m-%d").date()
+                week_key = d.strftime("%G-W%V")  # ISO week (Monday-based)
+            except ValueError:
+                continue
+
+            key = (initials, week_key)
+            if key not in groups:
+                groups[key] = {"total": 0, "thumbs_up": 0, "thumbs_down": 0, "flagged": 0}
+            groups[key]["total"] += 1
+            rating = e.get("rating", "")
+            if rating in ("thumbs_up", "thumbs_down", "flagged"):
+                groups[key][rating] += 1
+
+        # Flatten to list, sort by week desc then total desc
+        rows = [
+            {"initials": k[0], "week": k[1], **v}
+            for k, v in groups.items()
+        ]
+        rows.sort(key=lambda r: (r["week"], r["total"]), reverse=True)
+
+        return JSONResponse({"rows": rows, "weeks": weeks}, status_code=200)
+
+    except Exception as e:
+        logging.error(f"Analytics by-user failed: {e}")
+        return JSONResponse({"error": "Failed to generate by-user analytics"}, status_code=500)
+
+
 # ---------------------------------------------------------------------------
 # Admin user management — single endpoint, dispatches by action query param
 # Azure Functions can't reliably mix exact + parameterized routes on the same
@@ -2165,3 +2274,194 @@ async def admin_users(req: Request) -> JSONResponse:
             return JSONResponse({"error": "Failed to reset password"}, status_code=500)
 
     return JSONResponse({"error": "Method not allowed"}, status_code=405)
+
+
+# ---------------------------------------------------------------------------
+# Time entry endpoints — digital version of paper Operator Hour Report
+# One entry = one machine's hours for one operator on one date
+# ---------------------------------------------------------------------------
+
+_HOUR_FIELDS = ["setup", "run", "reset", "repair", "wait_tool", "other"]
+
+
+def _parse_hours(value):
+    """Parse an hours input. Empty/None becomes 0.0. Returns float or raises ValueError."""
+    if value in (None, "", 0):
+        return 0.0
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"Invalid hours value: {value!r}")
+    if f < 0 or f > 24:
+        raise ValueError(f"Hours out of range (0-24): {f}")
+    return round(f, 2)
+
+
+@app.route(route="time-entries", methods=["POST"])
+async def submit_time_entry(req: Request) -> JSONResponse:
+    """Save a time entry (one machine's hours for one operator/day).
+
+    Body: {date: "YYYY-MM-DD", initials, machine, setup, run, reset, repair, wait_tool, other, notes?}
+    """
+    auth_result = auth_helper.require_auth(req)
+    if isinstance(auth_result, JSONResponse):
+        return auth_result
+    display_name = auth_result.get("display_name", auth_result.get("sub", ""))
+
+    try:
+        body = await req.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+    date_str = body.get("date", "")
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_str):
+        return JSONResponse({"error": "Invalid date, use YYYY-MM-DD"}, status_code=400)
+
+    initials = (body.get("initials") or "").strip()[:20]
+    if not initials:
+        return JSONResponse({"error": "initials is required"}, status_code=400)
+
+    try:
+        machine = int(body.get("machine", 0))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "machine must be an integer"}, status_code=400)
+    if machine < 1 or machine > 50:
+        return JSONResponse({"error": "machine must be between 1 and 50"}, status_code=400)
+
+    hours = {}
+    try:
+        for f in _HOUR_FIELDS:
+            hours[f] = _parse_hours(body.get(f))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+    notes = (body.get("notes") or "")[:500]
+    now = datetime.now(timezone.utc)
+    row_key = f"{initials}_{machine:02d}_{uuid.uuid4().hex[:8]}"
+
+    entity = {
+        "PartitionKey": date_str,
+        "RowKey": row_key,
+        "date": date_str,
+        "initials": initials,
+        "username": display_name,
+        "machine": machine,
+        **hours,
+        "notes": notes,
+        "created_at": now.isoformat(),
+    }
+
+    try:
+        table = get_table_client("timeentries")
+        table.create_entity(entity)
+        logging.info(f"Time entry saved: {date_str} {initials} machine {machine}")
+        return JSONResponse({"status": "saved", "id": row_key, **entity}, status_code=201)
+    except Exception as e:
+        logging.error(f"Failed to save time entry: {e}")
+        return JSONResponse({"error": "Failed to save time entry"}, status_code=500)
+
+
+@app.route(route="time-entries", methods=["GET"])
+async def list_time_entries(req: Request) -> JSONResponse:
+    """List time entries. Regular users see only their own; admins see all.
+
+    Query params: ?date=YYYY-MM-DD (single day) or ?start=YYYY-MM-DD&end=YYYY-MM-DD (range)
+                  ?initials=XX (admin-only filter)
+    """
+    auth_result = auth_helper.require_auth(req)
+    if isinstance(auth_result, JSONResponse):
+        return auth_result
+    display_name = auth_result.get("display_name", auth_result.get("sub", ""))
+    is_admin = auth_result.get("role") == "admin"
+
+    date_filter = req.query_params.get("date")
+    start = req.query_params.get("start")
+    end = req.query_params.get("end")
+    initials_filter = req.query_params.get("initials")
+
+    filters = []
+    for val, name in [(date_filter, "date"), (start, "start"), (end, "end")]:
+        if val and not re.match(r"^\d{4}-\d{2}-\d{2}$", val):
+            return JSONResponse({"error": f"Invalid {name} format, use YYYY-MM-DD"}, status_code=400)
+
+    if date_filter:
+        filters.append(f"PartitionKey eq '{date_filter}'")
+    else:
+        if start:
+            filters.append(f"PartitionKey ge '{start}'")
+        if end:
+            filters.append(f"PartitionKey le '{end}'")
+
+    # Default: last 7 days if no filters
+    if not filters:
+        today = datetime.now(timezone.utc).date()
+        week_ago = (today - timedelta(days=7)).strftime("%Y-%m-%d")
+        filters.append(f"PartitionKey ge '{week_ago}'")
+
+    query_filter = " and ".join(filters)
+
+    try:
+        table = get_table_client("timeentries")
+        entities = list(table.query_entities(query_filter=query_filter))
+
+        # Non-admins only see their own entries
+        if not is_admin:
+            entities = [e for e in entities if e.get("username") == display_name]
+        elif initials_filter:
+            entities = [e for e in entities if e.get("initials") == initials_filter]
+
+        results = [
+            {
+                "id": e.get("RowKey"),
+                "date": e.get("date") or e.get("PartitionKey"),
+                "initials": e.get("initials", ""),
+                "username": e.get("username", ""),
+                "machine": e.get("machine"),
+                "setup": e.get("setup", 0),
+                "run": e.get("run", 0),
+                "reset": e.get("reset", 0),
+                "repair": e.get("repair", 0),
+                "wait_tool": e.get("wait_tool", 0),
+                "other": e.get("other", 0),
+                "notes": e.get("notes", ""),
+                "created_at": e.get("created_at", ""),
+            }
+            for e in entities
+        ]
+        # Sort by date desc, then machine asc
+        results.sort(key=lambda r: (r["date"], -int(r.get("machine") or 0)), reverse=True)
+        return JSONResponse(results, status_code=200)
+    except Exception as e:
+        logging.error(f"Failed to list time entries: {e}")
+        return JSONResponse({"error": "Failed to list time entries"}, status_code=500)
+
+
+@app.route(route="time-entries/{partition_key}/{row_key}", methods=["DELETE"])
+async def delete_time_entry(req: Request) -> JSONResponse:
+    """Delete a time entry. Users can delete their own; admins can delete any."""
+    auth_result = auth_helper.require_auth(req)
+    if isinstance(auth_result, JSONResponse):
+        return auth_result
+    display_name = auth_result.get("display_name", auth_result.get("sub", ""))
+    is_admin = auth_result.get("role") == "admin"
+
+    partition_key = req.path_params.get("partition_key", "")
+    row_key = req.path_params.get("row_key", "")
+
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", partition_key):
+        return JSONResponse({"error": "Invalid partition_key"}, status_code=400)
+    if not row_key or len(row_key) > 200:
+        return JSONResponse({"error": "Invalid row_key"}, status_code=400)
+
+    try:
+        table = get_table_client("timeentries")
+        # Check ownership before deleting (unless admin)
+        if not is_admin:
+            entity = table.get_entity(partition_key=partition_key, row_key=row_key)
+            if entity.get("username") != display_name:
+                return JSONResponse({"error": "Forbidden"}, status_code=403)
+        table.delete_entity(partition_key=partition_key, row_key=row_key)
+        return JSONResponse({"status": "deleted"}, status_code=200)
+    except Exception as e:
+        logging.error(f"Failed to delete time entry: {e}")
+        return JSONResponse({"error": "Failed to delete time entry"}, status_code=500)

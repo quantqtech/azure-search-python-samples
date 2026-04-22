@@ -198,6 +198,17 @@
         .action-btn.danger { color: #c00; }
         .action-btn.danger:hover { border-color: #c00; background: #ffe0e0; }
 
+        .edit-initials-btn {
+            padding: 2px 6px;
+            border: 1px solid transparent;
+            background: transparent;
+            border-radius: 4px;
+            cursor: pointer;
+            color: #888;
+            font-size: 12px;
+        }
+        .edit-initials-btn:hover { border-color: var(--gent-blue); color: var(--gent-blue); background: var(--aidan-light-green); }
+
         /* Conversation history panel — shows full thread context */
         .convo-panel {
             background: #f5f5f5;
@@ -617,7 +628,8 @@
             const ratingClass = `badge-${item.rating}`;
             const ratingLabel = RATING_LABELS[item.rating] || item.rating;
             const dateStr = item.id ? item.id.replace('T', ' ').substring(0, 15) : item.date;
-            const who = item.initials ? `by <strong>${item.initials}</strong>` : 'anonymous';
+            const initialsDisplay = item.initials ? `<strong>${escHtml(item.initials)}</strong>` : '<em style="color:#888">no initials</em>';
+            const who = `by <span id="initials-${i}">${initialsDisplay}</span> <button class="edit-initials-btn" onclick="editInitials(${i}, '${item.date}', '${escHtml(item.id)}')" title="Edit initials">&#9998;</button>`;
             const user = item.username ? ` (${escHtml(item.username)})` : '';
             const mode = item.reasoning_level ? ` &middot; ${item.reasoning_level}` : '';
 
@@ -786,6 +798,36 @@
             navigator.clipboard.writeText(text).then(() => {
                 alert('Copied to clipboard — paste into your knowledge gap doc.');
             });
+        }
+
+        async function editInitials(i, partitionKey, rowKey) {
+            const current = document.getElementById(`initials-${i}`);
+            const currentText = current.textContent.trim() === 'no initials' ? '' : current.textContent.trim();
+            const newInitials = prompt('Enter initials:', currentText);
+            if (newInitials === null) return;  // cancelled
+            const trimmed = newInitials.trim();
+            if (!trimmed) {
+                alert('Initials cannot be empty.');
+                return;
+            }
+            try {
+                const resp = await fetch(`${API_BASE}/feedback/${encodeURIComponent(partitionKey)}/${encodeURIComponent(rowKey)}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${sessionStorage.getItem('auth_token')}`
+                    },
+                    body: JSON.stringify({ initials: trimmed })
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    alert(`Failed to update: ${err.error || resp.status}`);
+                    return;
+                }
+                current.innerHTML = `<strong>${escHtml(trimmed)}</strong>`;
+            } catch (e) {
+                alert(`Failed to update: ${e.message}`);
+            }
         }
 
         // Auto-load on page open

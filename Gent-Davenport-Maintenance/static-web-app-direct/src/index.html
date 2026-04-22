@@ -162,6 +162,23 @@
         .analytics-btn:hover { background: #e06b1a; }
         .analytics-btn.active { background: #c05a12; box-shadow: inset 0 2px 4px rgba(0,0,0,0.2); }
 
+        /* Time entry button — available to all logged-in users */
+        .time-btn {
+            padding: 0.4rem 0.9rem;
+            background: var(--gent-orange);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            text-decoration: none;
+            display: inline-block;
+            line-height: 1.4;
+        }
+        .time-btn:hover { background: #e06b1a; }
+
         /* Admin page button — admin only, same style as analytics */
         .admin-btn {
             padding: 0.4rem 0.9rem;
@@ -892,6 +909,7 @@
         <div class="header-right">
             <span id="user-display-name" class="user-display-name"></span>
             <div style="display:flex; gap:0.4rem;">
+                <a class="time-btn" href="time.html">Time</a>
                 <button id="analytics-btn" class="analytics-btn" onclick="toggleAnalytics()">Analytics</button>
                 <a id="admin-btn" class="admin-btn" href="admin.html">Admin</a>
             </div>
@@ -919,6 +937,13 @@
             <table class="perf-table" id="perf-table">
                 <thead><tr><th>Date</th><th>Turns</th><th>Avg Total</th><th>Avg Agent</th><th>Avg Graph</th><th>Avg Cite</th><th>In Tok</th><th>Out Tok</th><th>Users</th></tr></thead>
                 <tbody id="perf-table-body"></tbody>
+            </table>
+        </div>
+        <div class="analytics-chart-container">
+            <h3>Feedback by User — Last 4 Weeks</h3>
+            <table class="perf-table" id="by-user-table">
+                <thead><tr><th>Week</th><th>Initials</th><th>Total</th><th>&#128077;</th><th>&#128078;</th><th>&#128681;</th></tr></thead>
+                <tbody id="by-user-table-body"><tr><td colspan="6" style="text-align:center;color:#888">Loading...</td></tr></tbody>
             </table>
         </div>
     </div>
@@ -1072,7 +1097,34 @@
             } catch (err) {
                 document.getElementById('analytics-view').innerHTML =
                     '<p style="color:red;padding:2rem;">Failed to load analytics: ' + err.message + '</p>';
+                return;
             }
+            // Also load by-user feedback counts (non-fatal if it fails)
+            try {
+                const resp = await fetch(API_BASE + '/analytics/by-user?weeks=4', { headers: authHeaders() });
+                if (!resp.ok) throw new Error('API error ' + resp.status);
+                const data = await resp.json();
+                renderByUser(data.rows || []);
+            } catch (err) {
+                document.getElementById('by-user-table-body').innerHTML =
+                    '<tr><td colspan="6" style="text-align:center;color:red">Failed to load: ' + err.message + '</td></tr>';
+            }
+        }
+
+        function renderByUser(rows) {
+            const tbody = document.getElementById('by-user-table-body');
+            if (!rows.length) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#888">No feedback yet</td></tr>';
+                return;
+            }
+            tbody.innerHTML = rows.map(r =>
+                '<tr><td>' + r.week + '</td>' +
+                '<td><strong>' + r.initials + '</strong></td>' +
+                '<td>' + r.total + '</td>' +
+                '<td>' + (r.thumbs_up || 0) + '</td>' +
+                '<td>' + (r.thumbs_down || 0) + '</td>' +
+                '<td>' + (r.flagged || 0) + '</td></tr>'
+            ).join('');
         }
 
         function renderAnalytics(data) {

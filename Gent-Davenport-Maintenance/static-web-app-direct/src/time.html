@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Davenport — Time Entry</title>
+    <style>
+        :root {
+            --gent-blue: #00528A;
+            --gent-blue-dark: #003d66;
+            --gent-orange: #F3802B;
+            --aidan-light-green: #E1EFF2;
+            --bg-page: #f0f0f0;
+            --text-primary: #191919;
+            --border-light: #d0d0d0;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: Arial, 'Segoe UI', sans-serif;
+            background: var(--bg-page);
+            color: var(--text-primary);
+            font-size: 16px;
+        }
+        header {
+            background: var(--gent-blue);
+            color: white;
+            padding: 1rem 2rem;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+        header h1 { font-size: 22px; }
+        header .subtitle { font-size: 14px; opacity: 0.85; }
+        header .nav-btn {
+            color: white;
+            font-size: 14px;
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            border: 2px solid rgba(255,255,255,0.4);
+            border-radius: 6px;
+            background: transparent;
+            cursor: pointer;
+        }
+        header .nav-btn:hover { background: var(--gent-blue-dark); }
+        header .nav-btn.back { margin-left: auto; }
+
+        .content { padding: 1.5rem 2rem; }
+
+        .section {
+            background: white;
+            border: 1px solid var(--border-light);
+            border-radius: 8px;
+            margin-bottom: 1.5rem;
+            overflow: hidden;
+        }
+        .section-header {
+            padding: 0.75rem 1rem;
+            background: var(--aidan-light-green);
+            border-bottom: 1px solid var(--border-light);
+            font-weight: 600;
+            color: var(--gent-blue-dark);
+            font-size: 15px;
+        }
+
+        .entry-meta {
+            display: flex;
+            gap: 1rem;
+            padding: 1rem;
+            flex-wrap: wrap;
+            align-items: flex-end;
+        }
+        .entry-meta label { display: block; font-size: 13px; color: #555; margin-bottom: 4px; }
+        .entry-meta input {
+            padding: 0.5rem 0.75rem;
+            border: 2px solid var(--border-light);
+            border-radius: 6px;
+            font-size: 15px;
+            min-height: 38px;
+        }
+        .entry-meta input:focus { outline: none; border-color: var(--gent-orange); }
+
+        .hours-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        .hours-table th, .hours-table td {
+            padding: 0.35rem 0.5rem;
+            border-bottom: 1px solid var(--border-light);
+            text-align: center;
+        }
+        .hours-table th {
+            background: #f5f5f5;
+            font-weight: 600;
+            color: #444;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+        .hours-table th.mach { width: 60px; text-align: left; padding-left: 1rem; }
+        .hours-table td.mach { font-weight: 600; color: var(--gent-blue); text-align: left; padding-left: 1rem; }
+        .hours-table input.hrs {
+            width: 60px;
+            padding: 0.35rem;
+            border: 1px solid var(--border-light);
+            border-radius: 4px;
+            font-size: 14px;
+            text-align: center;
+        }
+        .hours-table input.hrs:focus { outline: none; border-color: var(--gent-orange); }
+        .hours-table input.notes {
+            width: 100%;
+            min-width: 120px;
+            padding: 0.35rem 0.5rem;
+            border: 1px solid var(--border-light);
+            border-radius: 4px;
+            font-size: 13px;
+        }
+        .hours-table td.actions { width: 90px; }
+
+        .row-save-btn {
+            padding: 0.35rem 0.7rem;
+            background: var(--gent-blue);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .row-save-btn:hover { background: var(--gent-blue-dark); }
+        .row-save-btn:disabled { background: #aaa; cursor: not-allowed; }
+        .row-saved { color: #28a745; font-size: 13px; font-weight: 600; }
+
+        .recent-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        .recent-table th, .recent-table td {
+            padding: 0.5rem 0.75rem;
+            border-bottom: 1px solid var(--border-light);
+            text-align: left;
+        }
+        .recent-table th {
+            background: #f5f5f5;
+            font-size: 12px;
+            text-transform: uppercase;
+            color: #444;
+        }
+        .recent-table td.num { text-align: right; }
+        .recent-table .delete-btn {
+            padding: 0.2rem 0.5rem;
+            background: transparent;
+            color: #c00;
+            border: 1px solid #c00;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .recent-table .delete-btn:hover { background: #ffe0e0; }
+
+        .empty-msg { padding: 2rem; text-align: center; color: #888; }
+        .err-msg { padding: 1rem; color: #c00; }
+
+        @media (max-width: 600px) {
+            header { padding: 0.75rem 1rem; }
+            header h1 { font-size: 18px; }
+            .content { padding: 0.75rem; }
+            .entry-meta { flex-direction: column; gap: 0.5rem; align-items: stretch; }
+            .hours-table { font-size: 12px; }
+            .hours-table th, .hours-table td { padding: 0.2rem 0.25rem; }
+            .hours-table input.hrs { width: 44px; font-size: 13px; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div>
+            <h1>&#9201; Operator Time Entry</h1>
+            <div class="subtitle">Log your hours per machine</div>
+        </div>
+        <span id="user-display-name" style="font-size:14px;opacity:0.9"></span>
+        <a href="index.html" class="nav-btn back">&#8592; Back to Chat</a>
+        <button class="nav-btn" onclick="signOut()">Sign Out</button>
+    </header>
+
+    <div class="content">
+
+        <div class="section">
+            <div class="section-header">Today's Entry</div>
+            <div class="entry-meta">
+                <div>
+                    <label for="entry-date">Date</label>
+                    <input type="date" id="entry-date">
+                </div>
+                <div>
+                    <label for="entry-initials">Initials</label>
+                    <input type="text" id="entry-initials" maxlength="4" style="width:80px;text-transform:uppercase" placeholder="XX">
+                </div>
+            </div>
+            <table class="hours-table">
+                <thead>
+                    <tr>
+                        <th class="mach">Machine</th>
+                        <th>Setup</th>
+                        <th>Run</th>
+                        <th>Reset</th>
+                        <th>Repair</th>
+                        <th>Wait Tool</th>
+                        <th>Other</th>
+                        <th>Notes</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody id="machine-rows"></tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <div class="section-header">My Recent Entries (last 7 days)</div>
+            <table class="recent-table">
+                <thead>
+                    <tr><th>Date</th><th>Mach</th><th>Setup</th><th>Run</th><th>Reset</th><th>Repair</th><th>Wait</th><th>Other</th><th>Notes</th><th></th></tr>
+                </thead>
+                <tbody id="recent-body">
+                    <tr><td colspan="10" class="empty-msg">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'https://func-davenport-api.azurewebsites.net/api';
+        const MACHINES = Array.from({length: 15}, (_, i) => i + 1);
+        const HOUR_FIELDS = ['setup', 'run', 'reset', 'repair', 'wait_tool', 'other'];
+
+        // Auth gate
+        if (!sessionStorage.getItem('auth_token')) {
+            window.location.replace('login.html');
+        }
+
+        function getTokenClaims() {
+            const token = sessionStorage.getItem('auth_token');
+            if (!token) return {};
+            try {
+                const payload = token.split('.')[1];
+                return JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
+            } catch { return {}; }
+        }
+
+        function authHeaders() {
+            return {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + sessionStorage.getItem('auth_token')
+            };
+        }
+
+        function signOut() {
+            sessionStorage.removeItem('auth_token');
+            window.location.replace('login.html');
+        }
+
+        // Header display name + initials default from login
+        const claims = getTokenClaims();
+        document.getElementById('user-display-name').textContent = claims.display_name || '';
+        // Prefill initials: first 2-3 chars of display_name, uppercase
+        const displayName = (claims.display_name || '').trim();
+        const defaultInitials = displayName
+            ? displayName.split(/\s+/).map(s => s[0] || '').join('').toUpperCase().substring(0, 3)
+            : '';
+
+        // Today's date default
+        const today = new Date();
+        const todayStr = today.toISOString().substring(0, 10);
+        document.getElementById('entry-date').value = todayStr;
+
+        // Initials — use saved or default
+        const savedInitials = localStorage.getItem('time_entry_initials');
+        document.getElementById('entry-initials').value = savedInitials || defaultInitials;
+        document.getElementById('entry-initials').addEventListener('change', (e) => {
+            localStorage.setItem('time_entry_initials', e.target.value.toUpperCase());
+            e.target.value = e.target.value.toUpperCase();
+        });
+
+        // Build machine rows
+        function buildRows() {
+            const tbody = document.getElementById('machine-rows');
+            tbody.innerHTML = MACHINES.map(m => `
+                <tr data-machine="${m}">
+                    <td class="mach">Mach ${m}</td>
+                    ${HOUR_FIELDS.map(f => `<td><input class="hrs" type="number" min="0" max="24" step="0.25" data-field="${f}"></td>`).join('')}
+                    <td><input class="notes" type="text" data-field="notes" maxlength="200"></td>
+                    <td class="actions"><button class="row-save-btn" onclick="saveRow(${m})">Save</button></td>
+                </tr>
+            `).join('');
+        }
+        buildRows();
+
+        async function saveRow(machine) {
+            const row = document.querySelector(`tr[data-machine="${machine}"]`);
+            const btn = row.querySelector('.row-save-btn');
+            const date = document.getElementById('entry-date').value;
+            const initials = document.getElementById('entry-initials').value.trim().toUpperCase();
+
+            if (!date) { alert('Please pick a date.'); return; }
+            if (!initials) { alert('Please enter your initials.'); return; }
+
+            const payload = { date, initials, machine };
+            let anyHours = false;
+            for (const f of HOUR_FIELDS) {
+                const v = row.querySelector(`input[data-field="${f}"]`).value;
+                const num = v === '' ? 0 : parseFloat(v);
+                payload[f] = num;
+                if (num > 0) anyHours = true;
+            }
+            payload.notes = row.querySelector('input[data-field="notes"]').value;
+
+            if (!anyHours) { alert('Enter at least one hour value.'); return; }
+
+            btn.disabled = true;
+            btn.textContent = 'Saving...';
+            try {
+                const resp = await fetch(API_BASE + '/time-entries', {
+                    method: 'POST',
+                    headers: authHeaders(),
+                    body: JSON.stringify(payload)
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    throw new Error(err.error || 'HTTP ' + resp.status);
+                }
+                btn.textContent = 'Saved ✓';
+                btn.style.background = '#28a745';
+                // Clear the row so they can enter a different entry
+                row.querySelectorAll('input.hrs').forEach(i => i.value = '');
+                row.querySelector('input.notes').value = '';
+                setTimeout(() => {
+                    btn.disabled = false;
+                    btn.textContent = 'Save';
+                    btn.style.background = '';
+                }, 1500);
+                loadRecent();
+            } catch (e) {
+                alert('Failed to save: ' + e.message);
+                btn.disabled = false;
+                btn.textContent = 'Save';
+            }
+        }
+
+        async function loadRecent() {
+            const tbody = document.getElementById('recent-body');
+            try {
+                const resp = await fetch(API_BASE + '/time-entries', { headers: authHeaders() });
+                if (resp.status === 401) {
+                    signOut();
+                    return;
+                }
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const rows = await resp.json();
+                if (!rows.length) {
+                    tbody.innerHTML = '<tr><td colspan="10" class="empty-msg">No entries in the last 7 days.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = rows.map(r => `
+                    <tr>
+                        <td>${r.date}</td>
+                        <td><strong>${r.machine}</strong></td>
+                        <td class="num">${r.setup || ''}</td>
+                        <td class="num">${r.run || ''}</td>
+                        <td class="num">${r.reset || ''}</td>
+                        <td class="num">${r.repair || ''}</td>
+                        <td class="num">${r.wait_tool || ''}</td>
+                        <td class="num">${r.other || ''}</td>
+                        <td>${escHtml(r.notes || '')}</td>
+                        <td><button class="delete-btn" onclick="deleteEntry('${r.date}','${r.id}')">Delete</button></td>
+                    </tr>
+                `).join('');
+            } catch (e) {
+                tbody.innerHTML = '<tr><td colspan="10" class="err-msg">Failed to load: ' + e.message + '</td></tr>';
+            }
+        }
+
+        async function deleteEntry(date, id) {
+            if (!confirm('Delete this entry?')) return;
+            try {
+                const resp = await fetch(API_BASE + '/time-entries/' + encodeURIComponent(date) + '/' + encodeURIComponent(id), {
+                    method: 'DELETE',
+                    headers: authHeaders()
+                });
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                loadRecent();
+            } catch (e) {
+                alert('Failed to delete: ' + e.message);
+            }
+        }
+
+        function escHtml(s) {
+            return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        loadRecent();
+    </script>
+</body>
+</html>
