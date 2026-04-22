@@ -30,21 +30,61 @@
             color: white;
             padding: 1rem 2rem;
             display: flex;
+            flex-wrap: wrap;
             align-items: center;
             gap: 1rem;
         }
-        header h1 { font-size: 22px; }
-        header .subtitle { font-size: 14px; opacity: 0.85; }
-        header a {
-            margin-left: auto;
-            color: white;
-            font-size: 14px;
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
             text-decoration: none;
-            padding: 0.5rem 1rem;
+            color: white;
+        }
+        .header-brand img { height: 50px; border-radius: 4px; }
+        header h1 { font-size: 28px; font-weight: 700; }
+        header .subtitle { font-size: 18px; opacity: 0.9; }
+        .header-right {
+            margin-left: auto;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+        }
+        .nav-btns { display: flex; gap: 0.4rem; }
+        .nav-btn {
+            padding: 0.4rem 0.9rem;
+            background: var(--gent-orange);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+            line-height: 1.4;
+            transition: background-color 0.2s;
+        }
+        .nav-btn:hover { background: #e06b1a; }
+        .nav-btn.active { background: #c05a12; box-shadow: inset 0 2px 4px rgba(0,0,0,0.2); }
+        .sign-out-btn {
+            padding: 0.4rem 0.9rem;
+            background: transparent;
+            color: white;
             border: 2px solid rgba(255,255,255,0.4);
             border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
         }
-        header a:hover { background: var(--gent-blue-dark); }
+        .sign-out-btn:hover { background: var(--gent-blue-dark); }
+        .user-display-name { font-size: 14px; color: white; opacity: 0.9; }
+        @media (max-width: 600px) {
+            header { padding: 0.75rem 1rem; }
+            header h1 { font-size: 20px; }
+            header .subtitle { font-size: 14px; }
+            .header-brand img { height: 36px; }
+        }
 
         .controls {
             display: flex;
@@ -351,13 +391,22 @@
 </head>
 <body>
     <header>
-        <div>
-            <h1>&#128203; Admin Panel</h1>
-            <div class="subtitle">Davenport Support — Feedback &amp; Users</div>
+        <a href="index.html" class="header-brand" title="Back to chat">
+            <img src="images/Gent-Machine-Logo-Blue-White-Text.jpg" alt="Gent Machine Company">
+            <div>
+                <h1>Davenport Model B Support</h1>
+                <div class="subtitle">&#128203; Admin Panel</div>
+            </div>
+        </a>
+        <div class="header-right">
+            <span id="user-display-name" class="user-display-name"></span>
+            <div class="nav-btns">
+                <a class="nav-btn" href="time.html">Time</a>
+                <a class="nav-btn" href="index.html?view=analytics">Analytics</a>
+                <a class="nav-btn active" href="admin.html">Admin</a>
+            </div>
+            <button class="sign-out-btn" onclick="signOut()">Sign Out</button>
         </div>
-        <span id="user-display-name" class="user-display-name"></span>
-        <a href="index.html">&#8592; Back to Chat</a>
-        <button onclick="signOut()" style="padding:0.4rem 0.9rem;background:transparent;color:white;border:2px solid rgba(255,255,255,0.4);border-radius:6px;font-size:13px;cursor:pointer;">Sign Out</button>
     </header>
 
     <div class="controls">

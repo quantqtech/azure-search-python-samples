@@ -2165,6 +2165,116 @@ async def analytics_by_user(req: Request) -> JSONResponse:
         return JSONResponse({"error": "Failed to generate by-user analytics"}, status_code=500)
 
 
+@app.route(route="analytics/time", methods=["GET"])
+async def analytics_time(req: Request) -> JSONResponse:
+    """Time entry analytics for a given week (admin-only).
+
+    Query param: ?week_start=YYYY-MM-DD (Monday). Defaults to this week's Monday.
+    Returns: by_machine, by_operator, operator_machine (all for the requested week).
+    """
+    auth_result = auth_helper.require_admin(req)
+    if isinstance(auth_result, JSONResponse):
+        return auth_result
+
+    # Default to current ISO week (Monday)
+    today = datetime.now(timezone.utc).date()
+    default_monday = today - timedelta(days=today.weekday())  # Mon=0
+    week_start_str = req.query_params.get("week_start") or default_monday.strftime("%Y-%m-%d")
+
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", week_start_str):
+        return JSONResponse({"error": "Invalid week_start format, use YYYY-MM-DD"}, status_code=400)
+
+    try:
+        week_start = datetime.strptime(week_start_str, "%Y-%m-%d").date()
+    except ValueError:
+        return JSONResponse({"error": "Invalid week_start"}, status_code=400)
+
+    week_end = week_start + timedelta(days=6)
+    week_end_str = week_end.strftime("%Y-%m-%d")
+
+    hour_fields = ["setup", "run", "reset", "repair", "wait_tool", "other"]
+
+    try:
+        table = get_table_client("timeentries")
+        entities = list(table.query_entities(
+            query_filter=f"PartitionKey ge '{week_start_str}' and PartitionKey le '{week_end_str}'"
+        ))
+
+        # Aggregate by machine and by operator; also track operator_machine pairs
+        by_machine = {}       # machine (int) -> {field: hours}
+        by_operator = {}      # initials -> {field: hours}
+        op_machine = {}       # (initials, machine) -> total hours
+
+        for e in entities:
+            machine = e.get("machine")
+            if machine is None:
+                continue
+            try:
+                machine = int(machine)
+            except (TypeError, ValueError):
+                continue
+            initials = (e.get("initials") or "").strip() or "(none)"
+
+            # init dicts
+            if machine not in by_machine:
+                by_machine[machine] = {f: 0.0 for f in hour_fields}
+            if initials not in by_operator:
+                by_operator[initials] = {f: 0.0 for f in hour_fields}
+            pair_key = (initials, machine)
+            if pair_key not in op_machine:
+                op_machine[pair_key] = 0.0
+
+            total = 0.0
+            for f in hour_fields:
+                try:
+                    v = float(e.get(f) or 0)
+                except (TypeError, ValueError):
+                    v = 0.0
+                by_machine[machine][f] += v
+                by_operator[initials][f] += v
+                total += v
+            op_machine[pair_key] += total
+
+        # Flatten + totals
+        by_machine_rows = []
+        for m, hrs in by_machine.items():
+            total = sum(hrs.values())
+            by_machine_rows.append({
+                "machine": m,
+                **{k: round(v, 2) for k, v in hrs.items()},
+                "total": round(total, 2),
+            })
+        by_machine_rows.sort(key=lambda r: -r["total"])
+
+        by_operator_rows = []
+        for ini, hrs in by_operator.items():
+            total = sum(hrs.values())
+            by_operator_rows.append({
+                "initials": ini,
+                **{k: round(v, 2) for k, v in hrs.items()},
+                "total": round(total, 2),
+            })
+        by_operator_rows.sort(key=lambda r: -r["total"])
+
+        op_machine_rows = [
+            {"initials": k[0], "machine": k[1], "total": round(v, 2)}
+            for k, v in op_machine.items()
+        ]
+        op_machine_rows.sort(key=lambda r: (r["initials"], r["machine"]))
+
+        return JSONResponse({
+            "week_start": week_start_str,
+            "week_end": week_end_str,
+            "by_machine": by_machine_rows,
+            "by_operator": by_operator_rows,
+            "operator_machine": op_machine_rows,
+        }, status_code=200)
+
+    except Exception as e:
+        logging.error(f"Analytics time failed: {e}")
+        return JSONResponse({"error": "Failed to generate time analytics"}, status_code=500)
+
+
 # ---------------------------------------------------------------------------
 # Admin user management — single endpoint, dispatches by action query param
 # Azure Functions can't reliably mix exact + parameterized routes on the same

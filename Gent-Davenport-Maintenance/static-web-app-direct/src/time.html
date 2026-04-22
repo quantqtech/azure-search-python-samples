@@ -26,24 +26,55 @@
             color: white;
             padding: 1rem 2rem;
             display: flex;
+            flex-wrap: wrap;
             align-items: center;
             gap: 1rem;
+        }
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            text-decoration: none;
+            color: white;
+        }
+        .header-brand img { height: 50px; border-radius: 4px; }
+        header h1 { font-size: 28px; font-weight: 700; }
+        header .subtitle { font-size: 18px; opacity: 0.9; }
+        .header-right {
+            margin-left: auto;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
             flex-wrap: wrap;
         }
-        header h1 { font-size: 22px; }
-        header .subtitle { font-size: 14px; opacity: 0.85; }
-        header .nav-btn {
+        .nav-btns { display: flex; gap: 0.4rem; }
+        .nav-btn {
+            padding: 0.4rem 0.9rem;
+            background: var(--gent-orange);
             color: white;
-            font-size: 14px;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
             text-decoration: none;
-            padding: 0.5rem 1rem;
+            display: inline-block;
+            line-height: 1.4;
+            transition: background-color 0.2s;
+        }
+        .nav-btn:hover { background: #e06b1a; }
+        .nav-btn.active { background: #c05a12; box-shadow: inset 0 2px 4px rgba(0,0,0,0.2); }
+        .sign-out-btn {
+            padding: 0.4rem 0.9rem;
+            background: transparent;
+            color: white;
             border: 2px solid rgba(255,255,255,0.4);
             border-radius: 6px;
-            background: transparent;
+            font-size: 13px;
             cursor: pointer;
         }
-        header .nav-btn:hover { background: var(--gent-blue-dark); }
-        header .nav-btn.back { margin-left: auto; }
+        .sign-out-btn:hover { background: var(--gent-blue-dark); }
+        .user-display-name { font-size: 14px; color: white; opacity: 0.9; }
 
         .content { padding: 1.5rem 2rem; }
 
@@ -164,7 +195,9 @@
 
         @media (max-width: 600px) {
             header { padding: 0.75rem 1rem; }
-            header h1 { font-size: 18px; }
+            header h1 { font-size: 20px; }
+            header .subtitle { font-size: 14px; }
+            .header-brand img { height: 36px; }
             .content { padding: 0.75rem; }
             .entry-meta { flex-direction: column; gap: 0.5rem; align-items: stretch; }
             .hours-table { font-size: 12px; }
@@ -175,13 +208,22 @@
 </head>
 <body>
     <header>
-        <div>
-            <h1>&#9201; Operator Time Entry</h1>
-            <div class="subtitle">Log your hours per machine</div>
+        <a href="index.html" class="header-brand" title="Back to chat">
+            <img src="images/Gent-Machine-Logo-Blue-White-Text.jpg" alt="Gent Machine Company">
+            <div>
+                <h1>Davenport Model B Support</h1>
+                <div class="subtitle">&#9201; Operator Time Entry</div>
+            </div>
+        </a>
+        <div class="header-right">
+            <span id="user-display-name" class="user-display-name"></span>
+            <div class="nav-btns">
+                <a class="nav-btn active" href="time.html">Time</a>
+                <a class="nav-btn" id="nav-analytics" href="index.html?view=analytics" style="display:none">Analytics</a>
+                <a class="nav-btn" id="nav-admin" href="admin.html" style="display:none">Admin</a>
+            </div>
+            <button class="sign-out-btn" onclick="signOut()">Sign Out</button>
         </div>
-        <span id="user-display-name" style="font-size:14px;opacity:0.9"></span>
-        <a href="index.html" class="nav-btn back">&#8592; Back to Chat</a>
-        <button class="nav-btn" onclick="signOut()">Sign Out</button>
     </header>
 
     <div class="content">
@@ -264,6 +306,10 @@
         const claims = getTokenClaims();
         const isAdmin = claims.role === 'admin';
         document.getElementById('user-display-name').textContent = claims.display_name || '';
+        if (isAdmin) {
+            document.getElementById('nav-analytics').style.display = '';
+            document.getElementById('nav-admin').style.display = '';
+        }
         // Prefill initials: first 2-3 chars of display_name, uppercase
         const displayName = (claims.display_name || '').trim();
         const defaultInitials = displayName

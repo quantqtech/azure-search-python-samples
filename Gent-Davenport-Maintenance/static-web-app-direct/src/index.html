@@ -206,6 +206,37 @@
             width: 100%;
         }
         .analytics-view.visible { display: block; }
+        .view-title {
+            color: var(--gent-blue-dark);
+            font-size: 28px;
+            font-weight: 700;
+            margin: 0 0 1rem 0;
+            padding: 0 0 0.5rem 0;
+            border-bottom: 3px solid var(--gent-orange);
+        }
+        .time-analytics-controls {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 0.75rem;
+            flex-wrap: wrap;
+        }
+        .time-analytics-controls button {
+            padding: 0.4rem 0.9rem;
+            background: white;
+            border: 2px solid var(--gent-blue);
+            color: var(--gent-blue);
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        .time-analytics-controls button:hover { background: var(--aidan-light-green); }
+        .time-analytics-controls button:disabled { opacity: 0.4; cursor: not-allowed; }
+        .time-analytics-controls .week-label { font-weight: 600; color: var(--gent-blue-dark); font-size: 15px; }
+        .time-grid th, .time-grid td { text-align: right; }
+        .time-grid th:first-child, .time-grid td:first-child { text-align: left; }
+        .time-grid tfoot td { font-weight: 700; border-top: 2px solid var(--gent-blue); }
 
         .analytics-summary-cards {
             display: grid;
@@ -922,6 +953,7 @@
 
     <!-- Analytics view — admin only, toggled via header button -->
     <div id="analytics-view" class="analytics-view">
+        <h2 class="view-title">&#128200; Analytics</h2>
         <div class="analytics-summary-cards" id="analytics-cards">
             <div class="analytics-card"><div class="card-value" id="stat-turns">--</div><div class="card-label">Total Turns (30d)</div></div>
             <div class="analytics-card"><div class="card-value" id="stat-duration">--</div><div class="card-label">Avg Response Time</div></div>
@@ -945,6 +977,32 @@
                 <thead><tr><th>Week</th><th>Initials</th><th>Total</th><th>&#128077;</th><th>&#128078;</th><th>&#128681;</th></tr></thead>
                 <tbody id="by-user-table-body"><tr><td colspan="6" style="text-align:center;color:#888">Loading...</td></tr></tbody>
             </table>
+        </div>
+
+        <div class="analytics-chart-container">
+            <h3>Time Entries — Weekly Summary</h3>
+            <div class="time-analytics-controls">
+                <button type="button" id="time-prev" onclick="changeTimeWeek(-1)">&larr; Prev</button>
+                <span class="week-label" id="time-week-label">Week of ...</span>
+                <button type="button" id="time-next" onclick="changeTimeWeek(1)">Next &rarr;</button>
+            </div>
+            <h4 style="margin-top:1rem;color:#444;font-size:15px;">Machine Utilization</h4>
+            <table class="perf-table time-grid" id="time-by-machine">
+                <thead><tr><th>Machine</th><th>Setup</th><th>Run</th><th>Reset</th><th>Repair</th><th>Wait Tool</th><th>Other</th><th>Total</th></tr></thead>
+                <tbody id="time-by-machine-body"><tr><td colspan="8" style="text-align:center;color:#888">Loading...</td></tr></tbody>
+            </table>
+            <h4 style="margin-top:1.5rem;color:#444;font-size:15px;">Operator Summary</h4>
+            <table class="perf-table time-grid" id="time-by-operator">
+                <thead><tr><th>Initials</th><th>Setup</th><th>Run</th><th>Reset</th><th>Repair</th><th>Wait Tool</th><th>Other</th><th>Total</th></tr></thead>
+                <tbody id="time-by-operator-body"><tr><td colspan="8" style="text-align:center;color:#888">Loading...</td></tr></tbody>
+            </table>
+            <h4 style="margin-top:1.5rem;color:#444;font-size:15px;">Operator &times; Machine</h4>
+            <div style="overflow-x:auto;">
+                <table class="perf-table time-grid" id="time-op-machine">
+                    <thead id="time-op-machine-head"></thead>
+                    <tbody id="time-op-machine-body"><tr><td style="text-align:center;color:#888">Loading...</td></tr></tbody>
+                </table>
+            </div>
         </div>
     </div>
 
@@ -1041,6 +1099,13 @@
         if (userRole === 'admin') {
             document.getElementById('analytics-btn').style.display = 'inline-block';
             document.getElementById('admin-btn').style.display = 'inline-block';
+
+            // Auto-open analytics if arrived via ?view=analytics (from admin.html / time.html nav)
+            // Deferred so `analyticsVisible` (declared with `let` later in the script) is initialized first
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.get('view') === 'analytics') {
+                window.addEventListener('DOMContentLoaded', () => toggleAnalytics());
+            }
         }
 
         // Auth header helper — include on every API call
@@ -1109,6 +1174,8 @@
                 document.getElementById('by-user-table-body').innerHTML =
                     '<tr><td colspan="6" style="text-align:center;color:red">Failed to load: ' + err.message + '</td></tr>';
             }
+            // Load time analytics for current week
+            loadTimeAnalytics();
         }
 
         function renderByUser(rows) {
@@ -1125,6 +1192,129 @@
                 '<td>' + (r.thumbs_down || 0) + '</td>' +
                 '<td>' + (r.flagged || 0) + '</td></tr>'
             ).join('');
+        }
+
+        // ---- Time entry analytics ----
+        let timeWeekStart = null;  // YYYY-MM-DD (Monday)
+
+        function mondayOf(date) {
+            const d = new Date(date);
+            const day = d.getUTCDay();  // 0 Sun .. 6 Sat
+            const diff = (day === 0 ? -6 : 1 - day);  // move back to Monday
+            d.setUTCDate(d.getUTCDate() + diff);
+            return d.toISOString().substring(0, 10);
+        }
+
+        function changeTimeWeek(deltaWeeks) {
+            if (!timeWeekStart) return;
+            const d = new Date(timeWeekStart + 'T00:00:00Z');
+            d.setUTCDate(d.getUTCDate() + deltaWeeks * 7);
+            timeWeekStart = d.toISOString().substring(0, 10);
+            loadTimeAnalytics();
+        }
+
+        async function loadTimeAnalytics() {
+            if (!timeWeekStart) timeWeekStart = mondayOf(new Date());
+            document.getElementById('time-week-label').textContent = 'Loading...';
+            try {
+                const resp = await fetch(API_BASE + '/analytics/time?week_start=' + timeWeekStart, { headers: authHeaders() });
+                if (!resp.ok) throw new Error('API error ' + resp.status);
+                const data = await resp.json();
+                renderTimeAnalytics(data);
+            } catch (err) {
+                document.getElementById('time-by-machine-body').innerHTML =
+                    '<tr><td colspan="8" style="text-align:center;color:red">Failed to load: ' + err.message + '</td></tr>';
+                document.getElementById('time-by-operator-body').innerHTML = '';
+                document.getElementById('time-op-machine-body').innerHTML = '';
+            }
+        }
+
+        function renderTimeAnalytics(data) {
+            const label = document.getElementById('time-week-label');
+            const fmt = (s) => {
+                const d = new Date(s + 'T00:00:00Z');
+                return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+            };
+            label.textContent = 'Week of ' + fmt(data.week_start) + ' — ' + fmt(data.week_end);
+
+            // Next button disabled if next week is in the future
+            const today = mondayOf(new Date());
+            document.getElementById('time-next').disabled = (data.week_start >= today);
+
+            // Machine table
+            const byMach = data.by_machine || [];
+            const mTbody = document.getElementById('time-by-machine-body');
+            if (!byMach.length) {
+                mTbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#888">No time entries this week</td></tr>';
+            } else {
+                const totals = { setup:0, run:0, reset:0, repair:0, wait_tool:0, other:0, total:0 };
+                mTbody.innerHTML = byMach.map(r => {
+                    ['setup','run','reset','repair','wait_tool','other','total'].forEach(k => totals[k] += r[k] || 0);
+                    return '<tr><td><strong>Mach ' + r.machine + '</strong></td>' +
+                        '<td>' + (r.setup || '') + '</td>' +
+                        '<td>' + (r.run || '') + '</td>' +
+                        '<td>' + (r.reset || '') + '</td>' +
+                        '<td>' + (r.repair || '') + '</td>' +
+                        '<td>' + (r.wait_tool || '') + '</td>' +
+                        '<td>' + (r.other || '') + '</td>' +
+                        '<td><strong>' + r.total + '</strong></td></tr>';
+                }).join('') + '<tr style="font-weight:700;border-top:2px solid var(--gent-blue);background:#fafafa"><td>TOTAL</td>' +
+                    '<td>' + totals.setup.toFixed(2) + '</td><td>' + totals.run.toFixed(2) + '</td>' +
+                    '<td>' + totals.reset.toFixed(2) + '</td><td>' + totals.repair.toFixed(2) + '</td>' +
+                    '<td>' + totals.wait_tool.toFixed(2) + '</td><td>' + totals.other.toFixed(2) + '</td>' +
+                    '<td>' + totals.total.toFixed(2) + '</td></tr>';
+            }
+
+            // Operator table
+            const byOp = data.by_operator || [];
+            const oTbody = document.getElementById('time-by-operator-body');
+            if (!byOp.length) {
+                oTbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#888">No time entries this week</td></tr>';
+            } else {
+                const totals = { setup:0, run:0, reset:0, repair:0, wait_tool:0, other:0, total:0 };
+                oTbody.innerHTML = byOp.map(r => {
+                    ['setup','run','reset','repair','wait_tool','other','total'].forEach(k => totals[k] += r[k] || 0);
+                    return '<tr><td><strong>' + r.initials + '</strong></td>' +
+                        '<td>' + (r.setup || '') + '</td>' +
+                        '<td>' + (r.run || '') + '</td>' +
+                        '<td>' + (r.reset || '') + '</td>' +
+                        '<td>' + (r.repair || '') + '</td>' +
+                        '<td>' + (r.wait_tool || '') + '</td>' +
+                        '<td>' + (r.other || '') + '</td>' +
+                        '<td><strong>' + r.total + '</strong></td></tr>';
+                }).join('') + '<tr style="font-weight:700;border-top:2px solid var(--gent-blue);background:#fafafa"><td>TOTAL</td>' +
+                    '<td>' + totals.setup.toFixed(2) + '</td><td>' + totals.run.toFixed(2) + '</td>' +
+                    '<td>' + totals.reset.toFixed(2) + '</td><td>' + totals.repair.toFixed(2) + '</td>' +
+                    '<td>' + totals.wait_tool.toFixed(2) + '</td><td>' + totals.other.toFixed(2) + '</td>' +
+                    '<td>' + totals.total.toFixed(2) + '</td></tr>';
+            }
+
+            // Operator × Machine matrix
+            const opMach = data.operator_machine || [];
+            const thead = document.getElementById('time-op-machine-head');
+            const mtbody = document.getElementById('time-op-machine-body');
+            if (!opMach.length) {
+                thead.innerHTML = '<tr><th>Operator</th></tr>';
+                mtbody.innerHTML = '<tr><td style="text-align:center;color:#888">No time entries this week</td></tr>';
+                return;
+            }
+            const operators = Array.from(new Set(opMach.map(r => r.initials))).sort();
+            const machines = Array.from(new Set(opMach.map(r => r.machine))).sort((a, b) => a - b);
+            const lookup = {};
+            opMach.forEach(r => { lookup[r.initials + '|' + r.machine] = r.total; });
+
+            thead.innerHTML = '<tr><th>Operator</th>' +
+                machines.map(m => '<th>M' + m + '</th>').join('') +
+                '<th>Total</th></tr>';
+            mtbody.innerHTML = operators.map(op => {
+                let rowTotal = 0;
+                const cells = machines.map(m => {
+                    const v = lookup[op + '|' + m] || 0;
+                    rowTotal += v;
+                    return '<td>' + (v || '') + '</td>';
+                }).join('');
+                return '<tr><td><strong>' + op + '</strong></td>' + cells + '<td><strong>' + rowTotal.toFixed(2) + '</strong></td></tr>';
+            }).join('');
         }
 
         function renderAnalytics(data) {
