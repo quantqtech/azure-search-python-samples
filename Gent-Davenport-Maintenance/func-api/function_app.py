@@ -2334,9 +2334,11 @@ async def analytics_time_trend(req: Request) -> JSONResponse:
         week_starts = [(start_monday + timedelta(weeks=i)).strftime("%Y-%m-%d") for i in range(weeks)]
         week_index = {w: i for i, w in enumerate(week_starts)}
 
-        # Aggregate per-machine per-week totals
-        # machine (int) -> [hours for each week index]
-        machine_totals = {}
+        # Aggregate per-machine per-week per-activity hours
+        # machine (int) -> [{activity: hours, ...} for each week index]
+        def empty_week():
+            return {f: 0.0 for f in hour_fields}
+        machine_data = {}
 
         for e in entities:
             machine = e.get("machine")
@@ -2357,27 +2359,34 @@ async def analytics_time_trend(req: Request) -> JSONResponse:
                 continue
             idx = week_index[monday_str]
 
-            total = 0.0
+            if machine not in machine_data:
+                machine_data[machine] = [empty_week() for _ in range(weeks)]
+
             for f in hour_fields:
                 try:
-                    total += float(e.get(f) or 0)
+                    machine_data[machine][idx][f] += float(e.get(f) or 0)
                 except (TypeError, ValueError):
                     pass
 
-            if machine not in machine_totals:
-                machine_totals[machine] = [0.0] * weeks
-            machine_totals[machine][idx] += total
-
-        machines_out = [
-            {"machine": m, "totals": [round(v, 2) for v in totals]}
-            for m, totals in machine_totals.items()
-        ]
+        # Build output with both totals and per-activity breakdown
+        machines_out = []
+        for m, weeks_data in machine_data.items():
+            totals = [round(sum(w.values()), 2) for w in weeks_data]
+            by_week_activity = [
+                {f: round(v, 2) for f, v in w.items()} for w in weeks_data
+            ]
+            machines_out.append({
+                "machine": m,
+                "totals": totals,
+                "by_week_activity": by_week_activity,
+            })
         # Sort by the most recent week's hours desc, then machine number
         machines_out.sort(key=lambda r: (-r["totals"][-1], r["machine"]))
 
         return JSONResponse({
             "weeks": week_starts,
             "machines": machines_out,
+            "activities": hour_fields,
         }, status_code=200)
 
     except Exception as e:

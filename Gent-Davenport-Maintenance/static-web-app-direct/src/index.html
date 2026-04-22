@@ -255,8 +255,7 @@
         .time-analytics-controls button:hover { background: var(--aidan-light-green); }
         .time-analytics-controls button:disabled { opacity: 0.4; cursor: not-allowed; }
         .time-analytics-controls .week-label { font-weight: 600; color: var(--gent-blue-dark); font-size: 15px; }
-        .time-grid th, .time-grid td { text-align: right; }
-        .time-grid th:first-child, .time-grid td:first-child { text-align: left; }
+        .time-grid th, .time-grid td { text-align: center; }
         .time-grid tfoot td { font-weight: 700; border-top: 2px solid var(--gent-blue); }
 
         .analytics-summary-cards {
@@ -1033,7 +1032,7 @@
 
             <div class="analytics-chart-container">
                 <h3>Weekly Trends — Hours per Machine (Last 8 Weeks)</h3>
-                <div style="font-size:12px;color:#888;margin-bottom:0.5rem">Click a machine in the legend to hide/show its line.</div>
+                <div style="font-size:12px;color:#888;margin-bottom:0.5rem">Click a machine in this legend to hide/show its line. Click an activity in the Workload chart above (Run, Setup, Repair, etc.) to exclude those hours from this trend.</div>
                 <div id="chart-trend-empty" style="display:none;padding:2rem;text-align:center;color:#888">No time entries recorded.</div>
                 <div style="position:relative;height:340px"><canvas id="chart-trend"></canvas></div>
             </div>
@@ -1486,7 +1485,16 @@
                     responsive: true,
                     maintainAspectRatio: false,
                     plugins: {
-                        legend: { position: 'bottom' },
+                        legend: {
+                            position: 'bottom',
+                            // Custom click handler: default toggle + sync Chart 2 to hide same activities
+                            onClick: (e, legendItem, legend) => {
+                                // Default toggle behavior (hide/show dataset on the bar chart)
+                                Chart.defaults.plugins.legend.onClick.call(legend, e, legendItem, legend);
+                                // Re-render trend chart with the updated activity visibility
+                                syncTrendWithWorkloadLegend();
+                            },
+                        },
                         tooltip: { callbacks: { label: (ctx) => ctx.dataset.label + ': ' + ctx.parsed.x + 'h' } },
                     },
                     scales: {
@@ -1497,8 +1505,24 @@
             });
         }
 
+        // Read which activities are visible in the workload chart and re-render the trend chart
+        function syncTrendWithWorkloadLegend() {
+            if (!machineWorkloadChart || !trendRawData) return;
+            const activeActivities = new Set();
+            machineWorkloadChart.data.datasets.forEach((ds, i) => {
+                if (!machineWorkloadChart.getDatasetMeta(i).hidden) {
+                    // Map display label back to internal key
+                    for (const [k, v] of Object.entries(ACTIVITY_LABELS)) {
+                        if (v === ds.label) activeActivities.add(k);
+                    }
+                }
+            });
+            renderTrendChart(trendRawData, activeActivities);
+        }
+
         // ---- Chart 2: Weekly Trends — Hours per Machine ----
         let trendChart = null;
+        let trendRawData = null;  // cached data so we can filter by activity client-side
         // Distinct-ish color palette for machine lines (cycles if >12 machines)
         const TREND_PALETTE = [
             '#00528A', '#F3802B', '#28A745', '#DC3545', '#6610f2', '#20c997',
@@ -1509,8 +1533,8 @@
             try {
                 const resp = await fetch(API_BASE + '/analytics/time/trend?weeks=8', { headers: authHeaders() });
                 if (!resp.ok) throw new Error('API error ' + resp.status);
-                const data = await resp.json();
-                renderTrendChart(data);
+                trendRawData = await resp.json();
+                renderTrendChart(trendRawData);
             } catch (err) {
                 document.getElementById('chart-trend-empty').textContent = 'Failed to load: ' + err.message;
                 document.getElementById('chart-trend-empty').style.display = '';
@@ -1518,7 +1542,7 @@
             }
         }
 
-        function renderTrendChart(data) {
+        function renderTrendChart(data, activeActivities) {
             const canvas = document.getElementById('chart-trend');
             const empty = document.getElementById('chart-trend-empty');
             const machines = data.machines || [];
@@ -1531,15 +1555,27 @@
             canvas.style.display = '';
             empty.style.display = 'none';
 
+            const allActivities = data.activities || ['setup','run','reset','repair','wait_tool','other'];
+            const active = activeActivities instanceof Set
+                ? activeActivities
+                : new Set(allActivities);
+
             const weekLabels = (data.weeks || []).map(w => {
                 const d = new Date(w + 'T00:00:00Z');
                 return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
             });
+
             const datasets = machines.map((m, i) => {
                 const color = TREND_PALETTE[i % TREND_PALETTE.length];
+                // Compute per-week totals, filtered to active activities
+                const points = (m.by_week_activity || []).map(wk => {
+                    let sum = 0;
+                    for (const act of active) sum += (wk[act] || 0);
+                    return Math.round(sum * 100) / 100;
+                });
                 return {
                     label: 'Mach ' + m.machine,
-                    data: m.totals,
+                    data: points.length ? points : m.totals,  // fallback to totals if no breakdown
                     borderColor: color,
                     backgroundColor: color,
                     tension: 0.15,
