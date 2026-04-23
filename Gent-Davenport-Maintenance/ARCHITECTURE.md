@@ -62,7 +62,7 @@ User: "Why is my part coming out short?"
         ▼
 ┌─── Agent + Search ──────────────────────────────┐
 │ Input = Layer 1 + Layer 2 + User Question        │
-│ davenport-direct-v1 (gpt-5-mini)                 │
+│ davenport-direct-v1 (gpt-4.1-mini)               │
 │ Uses azure_ai_search on davenport-kb-unified     │
 │ Graph context helps prioritize the answer        │
 └──────────────────────────────────────────────────┘

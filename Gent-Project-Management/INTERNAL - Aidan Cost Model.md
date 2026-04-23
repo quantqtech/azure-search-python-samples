@@ -30,7 +30,7 @@ Actual Azure spend on Gent Manufacturing subscription (`09d43e37-e7dc-4869-9db4-
 
 | If usage grows... | Impact |
 |---|---|
-| More queries (adoption increases) | Foundry Models goes up — but GPT-5-mini is cheap. 10× queries ≈ +$20-30/month |
+| More queries (adoption increases) | Foundry Models goes up — but gpt-4.1-mini (agent) is cheap. 10× queries ≈ +$20-30/month |
 | More documents indexed | Search stays Basic tier up to ~15,000 docs. Beyond that: Standard tier = ~$250/month |
 | More work centers on same platform | Minimal — same search index, same infrastructure. Maybe +$5-10/month storage |
 | Second customer on separate subscription | Same ~$125-135/month baseline per customer |

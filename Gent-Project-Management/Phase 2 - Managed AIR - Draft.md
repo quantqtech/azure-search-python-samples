@@ -142,12 +142,12 @@ Current Azure actual cost: **~$130/month** ($1,560/year)
 | Azure Container Apps | ~$24 | Foundry agent runtime |
 | Azure App Service | ~$16 | Static Web App hosting |
 | Container Registry | ~$5 | Container images |
-| Foundry Models (AOAI) | ~$3-27* | GPT-5-mini + embeddings (usage-based) |
+| Foundry Models (AOAI) | ~$3-27* | gpt-4.1-mini (agent) + gpt-5-mini (utility) + embeddings (usage-based) |
 | Storage | ~$0.25 | Blob storage, Table Storage, analytics lake |
 | Cosmos DB | ~$0.04 | Graph ontology (serverless — near-zero when idle) |
 | Functions | $0.00 | API layer (Flex Consumption — pay per execution) |
 
-*Foundry Models cost scales with usage. $3/month at current low adoption; will increase as usage grows but remains modest — GPT-5-mini is inexpensive per query.*
+*Foundry Models cost scales with usage. $3/month at current low adoption; will increase as usage grows but remains modest — both models are inexpensive per query.*
 
 Infrastructure fee ($400/month in all tiers) covers: hosting, monitoring, security patching, SOC 2 compliance controls, SLA accountability, and cost management. Not a pass-through — reflects the operational overhead of maintaining a production AI system in a compliant environment.
 

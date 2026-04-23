@@ -261,7 +261,7 @@ Current monthly cost: **~$130/month**
 | Azure Container Apps | ~$24 | Foundry agent runtime |
 | Azure App Service | ~$16 | Web app hosting |
 | Container Registry | ~$5 | Container images |
-| Foundry Models (AOAI) | ~$3-27 | GPT-5-mini + embeddings (usage-based) |
+| Foundry Models (AOAI) | ~$3-27 | gpt-4.1-mini (agent) + gpt-5-mini (utility) + embeddings (usage-based) |
 | Storage + Tables | ~$0.25 | Blobs, feedback, analytics, verification ledger |
 | Cosmos DB (Serverless) | ~$0.04 | Graph ontology |
 | Functions (Flex Consumption) | $0.00 | API layer |
