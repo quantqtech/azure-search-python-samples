@@ -3,7 +3,7 @@
 ## Project Overview
 Davenport Model B screw machine technical support system. Shop floor machinists ask questions, get answers with citations from a unified search index.
 
-**Production agent**: `davenport-direct-v1` — uses `azure_ai_search` tool against `davenport-kb-unified` index (1,241 docs). Fast (~30s).
+**Production agent**: `davenport-direct-v1` — uses `azure_ai_search` tool against `davenport-kb-unified` index (1,241 docs). **Model: gpt-4.1-mini** (~8-10s per query; switched from gpt-5-mini 2026-04-16 due to Azure-side latency degradation).
 
 **Retired (V2)**: Foundry IQ / MCP knowledge base pipeline — 3 separate agents, 3 indexes, 85-95s per query. Too slow. Do NOT use `reasoning_level: "balanced"` — that routes to the old MCP agents.
 
@@ -36,7 +36,8 @@ The search service's system-assigned managed identity needs `Storage Blob Data R
 
 ## Models
 - **Embedding**: text-embedding-3-large (Matryoshka truncated to 1536d — better quality than -small at same dimensions)
-- **Chat/Agent**: gpt-5-mini
+- **Foundry agent (davenport-direct-v1)**: **gpt-4.1-mini** (production since 2026-04-16)
+- **Classification / conversation distill** (direct AOAI chat.completions): gpt-5-mini — still used for small utility calls in function_app.py
 
 ### Foundry Deployment Names (MUST match exactly)
 Foundry auto-generates deployment names with suffixes. These are NOT the same as model names.
