@@ -20,7 +20,7 @@ Actual Azure spend on Gent Manufacturing subscription (`09d43e37-e7dc-4869-9db4-
 | Foundry Tools | $12.74 | $0.70 | ~$0 | Minimal after build phase |
 | Cosmos DB | $22.84 | $0.02 | ~$0.04 | Serverless — near-zero at idle |
 | Storage | $0.01 | $0.18 | ~$0.25 | Blobs, tables, analytics |
-| Functions | $0.00 | $0.00 | $0.00 | Flex Consumption — pay per execution |
+| Functions | $0.00 | $0.00 | $0.00 | Consumption plan — pay per execution |
 | Bandwidth | $0.00 | $0.03 | ~$0.00 | Negligible |
 | **Total** | **$137.46** | **$136.87** | **~$127** | |
 

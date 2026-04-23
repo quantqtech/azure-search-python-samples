@@ -264,7 +264,7 @@ Current monthly cost: **~$130/month**
 | Foundry Models (AOAI) | ~$3-27 | gpt-4.1-mini (agent) + gpt-5-mini (utility) + embeddings (usage-based) |
 | Storage + Tables | ~$0.25 | Blobs, feedback, analytics, verification ledger |
 | Cosmos DB (Serverless) | ~$0.04 | Graph ontology |
-| Functions (Flex Consumption) | $0.00 | API layer |
+| Functions (Consumption plan) | $0.00 | API layer |
 
 Included in all phases. Covers management, monitoring, security, SOC 2 compliance.
 

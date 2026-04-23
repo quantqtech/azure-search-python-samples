@@ -91,7 +91,7 @@ The Industrial Athlete OS produced a **175% increase in production earnings** an
 | AI models | Azure OpenAI (gpt-4.1-mini agent + gpt-5-mini utility + embeddings) | ~$3-27 (usage-based) |
 | Knowledge graph | Cosmos DB Gremlin (Serverless) | ~$0.04 (near-zero idle) |
 | Agent runtime | Foundry Agent Service | ~$24 |
-| API layer | Azure Functions (Flex Consumption) | $0.00 (pay per execution) |
+| API layer | Azure Functions (Consumption plan) | $0.00 (pay per execution) |
 | Storage | Azure Blob + Table Storage | ~$0.25 |
 | Web app | Azure App Service | ~$16 |
 | **Total platform run cost** | | **~$130/month** |

@@ -198,7 +198,7 @@ Fishbone / Ishikawa Pattern:
 - **Context**: Foundry MCP knowledge base pipeline took 43-49s per query (confirmed via trace analysis). Total response time was 85-95s — too slow for shop floor use.
 - **Decision**: Merge all 5 ks-azureblob-* indexes into one `davenport-kb-unified` index. Wire agents to use a single `azure_ai_search` direct tool instead of MCP.
 - **Rationale**: Direct azure_ai_search calls take ~0.5-2s vs 43-49s for MCP. BM25 simple search is fast and sufficient for keyword-based shop floor queries.
-- **Trade-offs**: Loses Foundry IQ's semantic reranking and multi-pass retrieval. Gains ~3x speed improvement (85-95s → ~30s).
+- **Trade-offs**: Loses Foundry IQ's semantic reranking and multi-pass retrieval. Gains ~3x speed improvement at the time (85-95s → ~30s with gpt-5-mini). See also **Decision 7** — subsequently reduced to ~8-10s after model swap.
 - **Result**: `davenport-kb-unified` (1,241 docs across 5 categories), `davenport-direct-v1` agent.
 
 ### Decision 1: Azure AI Search Agentic Retrieval / Foundry IQ (V2 — Legacy)
@@ -218,6 +218,13 @@ Fishbone / Ishikawa Pattern:
 - **Decision**: Use ChatCompletionSkill (gpt-5-mini) to verbalize each image into searchable text.
 - **Rationale**: LLM can understand diagrams, identify part numbers, describe assemblies.
 - **Trade-offs**: Slow — one API call per image. The 2-hour indexer limit means image-heavy batches need scheduled auto-resume.
+
+### Decision 7: Switch Foundry Agent Model to gpt-4.1-mini (Apr 2026)
+- **Context**: In April 2026, gpt-5-mini response times degraded from ~60s to ~130s per query with the same token counts — verified via direct model test (20.5s for a 33-token prompt, no search, no agent). Azure-side issue, not our code or context size.
+- **Decision**: Switch the `davenport-direct-v1` Foundry agent from gpt-5-mini to gpt-4.1-mini. Keep gpt-5-mini for utility calls (classification, conversation distill) where its higher reasoning is valuable and latency is small.
+- **Rationale**: Direct model test: gpt-4.1-mini = 4.1s vs gpt-5-mini = 20.5s for the same prompt. Full agent pipeline improved from ~130s avg to ~8.8s avg — 15× faster. Answer quality verified across 10 test questions.
+- **Trade-offs**: gpt-4.1-mini has slightly less reasoning capability than gpt-5-mini on complex multi-step problems, but the agent does most "reasoning" via search+citation anyway. Monitor gpt-5-mini periodically — if Azure restores performance, we can revisit.
+- **Result**: `davenport-direct-v1` now runs gpt-4.1-mini. CLAUDE.md, README.md, memory updated.
 
 ### Decision 4: Scheduled Indexer (PT30M) Instead of On-Demand
 - **Context**: Image-heavy PDFs cause the indexer to exceed the 2-hour execution limit.

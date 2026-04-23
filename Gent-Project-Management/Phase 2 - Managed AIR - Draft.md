@@ -145,7 +145,7 @@ Current Azure actual cost: **~$130/month** ($1,560/year)
 | Foundry Models (AOAI) | ~$3-27* | gpt-4.1-mini (agent) + gpt-5-mini (utility) + embeddings (usage-based) |
 | Storage | ~$0.25 | Blob storage, Table Storage, analytics lake |
 | Cosmos DB | ~$0.04 | Graph ontology (serverless — near-zero when idle) |
-| Functions | $0.00 | API layer (Flex Consumption — pay per execution) |
+| Functions | $0.00 | API layer (Consumption plan — pay per execution) |
 
 *Foundry Models cost scales with usage. $3/month at current low adoption; will increase as usage grows but remains modest — both models are inexpensive per query.*
 
