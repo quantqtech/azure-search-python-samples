@@ -175,17 +175,19 @@ for line in sys.stdin:
 
 ### Performance Baselines
 
-These are typical numbers for healthy operation (as of March 2026):
+These are typical numbers for healthy operation (as of April 2026, after gpt-4.1-mini switch — see Decision 7 in ARCHITECTURE.md):
 
 | Metric | Turn 1 (cold) | Turn 2+ (warm) | Concern Threshold |
 |--------|---------------|----------------|-------------------|
-| `duration_ms` | 45-60s | 25-35s | > 75s |
-| `timing_agent_ms` | 30-45s | 20-30s | > 50s |
+| `duration_ms` | 15-30s | 8-12s | > 40s |
+| `timing_agent_ms` | 8-15s | 4-8s | > 20s |
 | `timing_graph_ms` | 10-15s | 3-8s | > 20s |
 | `total_tokens` | 8,000-15,000 | 20,000-35,000 | > 40,000 |
 | `graph_context_chars` | 1,500-2,500 | 1,500-2,500 | > 4,000 |
 
-Turn 1 is slower because of Cosmos DB serverless cold start and world model loading. Multi-turn conversations accumulate message history, increasing `total_tokens` each turn.
+Turn 1 is slower because of Cosmos DB serverless cold start, world model loading, and Function App cold start. Multi-turn conversations accumulate message history, increasing `total_tokens` each turn.
+
+**Historical note**: These baselines were roughly 2x higher (45-60s cold, 25-35s warm) with gpt-5-mini before April 2026. If you see those numbers again, check whether the agent model was reverted.
 
 ### Step 3: Run Benchmarks
 
@@ -196,6 +198,8 @@ For deeper investigation, use the existing scripts:
 python test_graph_timing.py
 
 # Isolate search vs Foundry overhead (bypasses agent entirely)
+# Note: targets the retired V2 MCP pipeline. Historical reference only —
+# production uses direct azure_ai_search (~0.5-2s), not MCP.
 python test_mcp_latency.py
 ```
 
@@ -206,7 +210,7 @@ python test_mcp_latency.py
 | Script | Purpose | When to Use |
 |--------|---------|-------------|
 | `test_graph_timing.py` | Benchmark 5 questions + 2 multi-turn convos with full timing | Performance regression testing |
-| `test_mcp_latency.py` | Isolate MCP endpoint latency (bypasses Foundry) | "Is search slow or is Foundry slow?" |
+| `test_mcp_latency.py` | Isolate MCP endpoint latency (V2 retired pipeline, historical reference only) | Historical comparison — production uses direct `azure_ai_search`, not MCP |
 | `view_reasoning.py` | Deep dive into agent reasoning and tool calls for one question | Understanding why the agent gave a specific answer |
 | `test_agent.py` | Basic agent smoke test | Quick check that agent is responding |
 | `diagnose_skillset.py` | Audit skillset auth configuration | After 401 errors on indexer |
