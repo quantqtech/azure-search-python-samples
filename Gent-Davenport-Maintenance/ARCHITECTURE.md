@@ -265,12 +265,23 @@ The sidebar always shows a graph — Layer 2 focused traversal when a component 
 - General ("what is a Davenport?") → Layer 1 overview map
 
 ### Backend
-- **Azure Function App** (`func-api/function_app.py`): Python 3.12, Linux consumption plan
+- **Azure Function App** (`func-api/function_app.py`): Python 3.12, Dynamic (Consumption) plan
+  - `POST /api/auth/login` — JWT login
   - `POST /api/chat` — non-streaming chat endpoint
   - `POST /api/chat/stream` — SSE streaming endpoint (primary)
   - `POST /api/feedback` — user feedback (thumbs up/down/flag)
-  - `GET /api/feedback` — admin feedback review
-  - `POST /api/voice-memo` — voice memo upload to blob storage
+  - `GET /api/feedback` — admin feedback review (rating + From/To date range, defaults to last 30 days)
+  - `PATCH /api/feedback/{partition_key}/{row_key}` — admin edit initials
+  - `POST /api/voice-memo` — legacy voice memo upload (retained; superseded by browser Web Speech API for input)
+  - `POST /api/time-entries` — operator logs hours per machine
+  - `GET /api/time-entries` — list entries (admin sees all; users see their own)
+  - `PUT /api/time-entries/{partition_key}/{row_key}` — admin edit time entry
+  - `DELETE /api/time-entries/{partition_key}/{row_key}` — admin delete time entry
+  - `GET /api/analytics/summary` — admin: 30-day app-usage rollup
+  - `GET /api/analytics/by-user` — admin: feedback counts by initials per ISO week
+  - `GET /api/analytics/time` — admin: weekly time totals (by machine, operator, operator×machine, day-by-day)
+  - `GET /api/analytics/time/trend` — admin: per-machine per-week per-activity hours for last N weeks (charts)
+  - `GET/POST/PUT/DELETE /api/manage-users` — admin user management
 - **Citation pipeline**: 9-pass processing — see detailed section below
 
 ### Citation Pipeline (detailed)
@@ -320,7 +331,12 @@ The agent outputs citations in **8+ inconsistent formats** depending on how Foun
 
 ### Search
 - **Azure AI Search** (`srch-j6lw7vswhnnhw`): `davenport-kb-unified` index, 1,241 docs
-- **Foundry Agent**: `davenport-direct-v1` (gpt-5-mini + azure_ai_search tool)
+- **Foundry Agent**: `davenport-direct-v1` (**gpt-4.1-mini** + azure_ai_search tool; switched from gpt-5-mini 2026-04-16 due to Azure-side latency degradation)
+
+### Charts (Analytics view)
+- **Chart.js v4.4.1** via CDN (`https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js`) — loaded in index.html head
+- Used by the Time & Machines sub-tab: horizontal stacked bar (machine workload) + line chart (weekly trends per machine, last 8 weeks)
+- Legend click-to-toggle is native Chart.js behavior; we override Chart 1's `onClick` to also re-render Chart 2 so activity exclusions (Run, Repair, etc.) flow through to the trend totals
 
 ---
 
@@ -328,21 +344,24 @@ The agent outputs citations in **8+ inconsistent formats** depending on how Foun
 
 | File | Purpose |
 |------|---------|
-| `func-api/function_app.py` | Azure Function API — chat, streaming, feedback, citation pipeline |
+| `func-api/function_app.py` | Azure Function API — chat, streaming, feedback, time entries, analytics, citation pipeline |
 | `func-api/graph_helper.py` | Query-time graph functions for Function App (Layer 1 + Layer 2) |
+| `func-api/auth_helper.py` | JWT auth + user table CRUD + rate limiting |
 | `graph_client.py` | Cosmos DB Gremlin connection helper + CRUD operations |
 | `build_graph.py` | Extract ontology from documents, populate graph (offline) |
 | `build_unified_index.py` | Merge 5 source indexes into davenport-kb-unified |
 | `create_direct_search_agent.py` | Create/update davenport-direct-v1 agent in Foundry |
-| `static-web-app-direct/src/index.html` | Frontend SPA — chat, graph sidebar, streaming |
-| `static-web-app-direct/src/admin.html` | Admin page — feedback review, graph verification |
+| `static-web-app-direct/src/index.html` | Frontend SPA — chat, graph sidebar, streaming, Analytics view with sub-tabs |
+| `static-web-app-direct/src/admin.html` | Admin page — feedback review + edit, user management |
+| `static-web-app-direct/src/time.html` | Operator time entry page — per-machine hours per activity; admin edit/delete + date range filter |
+| `static-web-app-direct/src/login.html` | Login page (JWT issue) |
 
 ## Azure Resources
 
 | Resource | Type | Purpose | Cost |
 |----------|------|---------|------|
 | `srch-j6lw7vswhnnhw` | Azure AI Search (Basic) | Unified index + source indexes | ~$70/month |
-| `aoai-j6lw7vswhnnhw` | Azure OpenAI | gpt-5-mini agent + embeddings + classification | Pay-per-use |
+| `aoai-j6lw7vswhnnhw` | Azure OpenAI | **gpt-4.1-mini** (Foundry agent) + gpt-5-mini (classification/conversation distill) + embeddings (text-embedding-3-large) | Pay-per-use |
 | `stj6lw7vswhnnhw` | Storage Account | PDF blobs + feedback table + verification ledger + usage counters + analytics lake | ~$5/month |
 | `cosmos-gent-gremlin` | Cosmos DB (Gremlin, Serverless) | Machine ontology graph | ~$5-15/month |
 
@@ -361,12 +380,17 @@ The agent outputs citations in **8+ inconsistent formats** depending on how Foun
 |-------|---------|----------|------------|
 | **JSONL analytics lake** | Activity log — every query, full response metrics | `stj6lw7vswhnnhw` / `analytics/conversations/YYYY/MM/DD.jsonl` | Append-only, one file per day |
 | **JSONL feedback lake** | Feedback events mirrored to blob | `stj6lw7vswhnnhw` / `analytics/feedback/YYYY/MM/DD.jsonl` | Append-only |
+| **JSONL time-entries lake** | Time-entry events (create/edit/delete) mirrored to blob | `stj6lw7vswhnnhw` / `analytics/time_entries/YYYY/MM/DD.jsonl` | Append-only |
 | **JSONL graph-nodes lake** | Graph classifier selections per query | `stj6lw7vswhnnhw` / `analytics/graph-nodes/YYYY/MM/DD.jsonl` | Append-only |
 | **JSONL graph-edges lake** | Graph traversal paths per query | `stj6lw7vswhnnhw` / `analytics/graph-edges/YYYY/MM/DD.jsonl` | Append-only |
 | **Table: `feedback`** | User feedback — thumbs up/down/flag, conversation history | `stj6lw7vswhnnhw` | PartitionKey=YYYY-MM-DD, RowKey=turn_id |
+| **Table: `timeentries`** | Operator hours per machine per activity | `stj6lw7vswhnnhw` | PartitionKey=YYYY-MM-DD, RowKey={initials}_{machine:02d}_{uuid8}. Fields: setup/run/reset/repair/wait_tool/other (hrs), notes, initials, username, machine |
+| **Table: `users`** | Auth store — PBKDF2-hashed passwords, display name, role | `stj6lw7vswhnnhw` | PartitionKey="users", RowKey=username |
 | **Table: `graph-verifications`** | Human verification decisions — permanent | `stj6lw7vswhnnhw` | Never auto-deleted |
 | **Table: `graph-usage`** | Edge hit/success counters — permanent | `stj6lw7vswhnnhw` | Survives graph rebuilds |
 | **Cosmos DB Gremlin** | Machine knowledge graph — queried at runtime | `cosmos-gent-gremlin` / `machine-ontology` | Rebuildable from documents |
+
+**Pattern:** Most write paths follow a **dual-write (hot + cold lake)** pattern — Table Storage for fast app operations (point reads/upserts, PartitionKey range queries), JSONL blob for analytics consumption (Power BI, ad-hoc queries, future agent analysis). The `log_to_lake()` helper is fire-and-forget.
 
 ### JSONL Conversation Fields (per turn)
 
@@ -406,12 +430,28 @@ Each line in `analytics/conversations/YYYY/MM/DD.jsonl` captures:
 | **Graph utilization** | % of queries where `graph_context_provided` = true | V3 graph value |
 | **Top graph paths** | graph-usage table: highest hit_count edges | Most valuable knowledge paths |
 | **Token cost proxy** | Sum `input_tokens` + `output_tokens` per day | Cost forecasting |
+| **Total hours / week** | Sum of all activity fields in `timeentries` for ISO week | Shop activity volume |
+| **Machine workload** | Sum per-machine hours in week | Workload distribution / underused machines |
+| **Top downtime category** | Highest non-run activity sum for week | Where time is being lost |
+| **Operator coverage** | Distinct `initials` with entries in week | Staffing spread |
+| **Per-machine weekly trend** | `analytics/time/trend`: machine × week totals | Is machine X's workload growing/shrinking? |
 
 ### Accessing Analytics Data
 
-**Admin page** (`admin.html`): Built-in analytics tab shows 30-day summary with bar chart, summary cards (Total Turns, Avg Response Time, Conversations, Active Days), and performance breakdown. Requires admin role.
+**Analytics view** (toggle inside `index.html`, admin-only; Admin button triggers it). Split into two **sub-tabs**:
 
-**API endpoint** (`/api/analytics/summary`): Returns last 30 days of daily aggregates (turn_count, avg_duration_sec, unique_conversations, unique_users, avg_input_tokens, avg_output_tokens).
+- **📊 App Usage** — Summary cards (Total Turns, Avg Response Time, Conversations, Active Days), daily turn bar chart, Performance Breakdown table, Feedback by User (ISO-week × initials)
+- **⏱ Time & Machines** — Week selector + 4 summary cards (Total Hours, Machines Active, Operators Active, Top Downtime Category), Machine Workload stacked bar chart (Chart.js), Weekly Trends per-machine line chart (8 weeks, Chart.js), Daily Detail table, Machine Utilization, Operator Summary, Operator × Machine matrix
+
+Cross-chart filtering: clicking an activity (Run, Setup, etc.) in the Workload chart's legend hides those bars **and** removes those hours from the Weekly Trends chart totals, letting you see "run-only trends" or "downtime-only trends."
+
+**Admin page** (`admin.html`): Feedback Review (with date-range filter, defaults to last 30 days; rating filter defaults to all) + User Management. Admin can edit feedback initials inline (✏️ button next to initials).
+
+**API endpoints**:
+- `GET /api/analytics/summary` — 30-day App Usage rollup
+- `GET /api/analytics/by-user?weeks=N` — feedback counts by initials per ISO week
+- `GET /api/analytics/time?week_start=YYYY-MM-DD` — time entry weekly aggregates
+- `GET /api/analytics/time/trend?weeks=N` — per-machine per-week per-activity hours for trend chart
 
 **Azure CLI** (bulk analysis):
 ```bash
