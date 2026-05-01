@@ -2069,10 +2069,14 @@ async def curation_run_evaluator(req: Request) -> JSONResponse:
         return JSONResponse({"error": "Evaluator run failed"}, status_code=500)
 
 
-@app.route(route="admin/rebuild-unified", methods=["POST"])
+@app.route(route="curation/rebuild-unified", methods=["POST"])
 async def admin_rebuild_unified(req: Request) -> JSONResponse:
     """Manual 'Rebuild now' — regenerates davenport-kb-unified from the 5 source
     indexes + active curated blobs.
+
+    Route note: previously /api/admin/rebuild-unified, but Azure Functions
+    reserves the admin/ URL prefix for host admin API. Route was moved to
+    curation/ to avoid the registration conflict.
 
     Curated chunks are skipped if already indexed since their last approval.
     Pass ?force_curated=true to bypass the skip and re-upload every active

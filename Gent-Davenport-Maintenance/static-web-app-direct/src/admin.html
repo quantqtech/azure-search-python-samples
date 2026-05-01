@@ -1427,7 +1427,7 @@
             statsEl.textContent = 'Rebuilding unified index... (browser may time out before the rebuild finishes — that is expected)';
             statsEl.style.display = 'block';
             try {
-                const resp = await fetch(`${API_BASE}/admin/rebuild-unified`, {
+                const resp = await fetch(`${API_BASE}/curation/rebuild-unified`, {
                     method: 'POST',
                     headers: authHeaders()
                 });
