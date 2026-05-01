@@ -131,13 +131,13 @@ def _bm25_search(question, top_k=10):
 # ── Evaluator ─────────────────────────────────────────────────────────────────
 EVALUATOR_SYSTEM_PROMPT = """You are an evaluation analyst for a Davenport Model B screw machine technical support RAG system at Gent Machine Company.
 
-A machinist asked a question, the agent gave an answer, and the machinist flagged or thumbs-down'd it with notes. Your job: classify what went wrong and, when actionable, draft a clean canonical Q&A pair that would help the NEXT machinist who has the same problem.
+A machinist asked a question, the agent gave an answer, and the machinist left notes — with any sentiment rating (thumbs up, thumbs down, flag, or none). The notes are the signal regardless of rating. Your job: classify what the notes are telling us and, when actionable, draft a clean canonical Q&A pair that would help the NEXT machinist who has the same problem.
 
 VERDICTS
 - gap:              The KB is missing the information needed. Retrieved chunks don't contain the answer.
 - wrong:            The KB has the right information, but the agent's answer contradicted it or missed it.
 - unclear_question: The original question is so vague/garbled that no answer would have helped — the fix is a jargon mapping or clarification.
-- not_actionable:   Test data, off-topic, single-character notes, or feedback the agent actually answered correctly.
+- not_actionable:   Test data, off-topic, single-character notes, "thanks!" / "great answer" affirmations on a thumbs_up row, or feedback the agent actually answered correctly.
 
 CRITICAL: HOW TO WRITE proposed_question
 The proposed_question is what a FUTURE machinist with the same problem would naturally type. They don't yet know the diagnosis. Write the question as a SYMPTOM, in machinist language.
@@ -273,18 +273,18 @@ def _select_candidates(max_rows):
     """Pull feedback rows that should be evaluated this run.
 
     Filter:
-      - rating in (flagged, thumbs_down)
-      - notes != ''
-      - review_status is null/empty
+      - notes != '' (any rating — thumbs up/down/flag/none all qualify)
+      - review_status is null/empty (not already processed)
       - PartitionKey >= today - LOOKBACK_DAYS
+
+    Per design: the notes are the curation signal, regardless of which sentiment
+    button was clicked. Thumbs-up rows with notes that just say "thanks" will
+    correctly come back as verdict='not_actionable' from the evaluator.
     """
     table = _get_table_client(FEEDBACK_TABLE)
     cutoff = (datetime.now(timezone.utc).date() - timedelta(days=LOOKBACK_DAYS)).strftime("%Y-%m-%d")
-    # Azure Tables can't natively filter on missing properties, so we filter post-fetch.
-    query = (
-        f"PartitionKey ge '{cutoff}' "
-        f"and (rating eq 'flagged' or rating eq 'thumbs_down')"
-    )
+    # Azure Tables can't natively filter on empty fields, so we filter post-fetch.
+    query = f"PartitionKey ge '{cutoff}'"
     rows = []
     for entity in table.query_entities(query_filter=query):
         if entity.get("review_status"):  # already processed
