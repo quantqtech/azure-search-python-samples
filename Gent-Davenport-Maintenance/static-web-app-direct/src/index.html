@@ -1826,11 +1826,11 @@
             return `
                 <div class="feedback-bar" id="fb-bar-${msgIndex}">
                     <button class="feedback-btn" id="fb-up-${msgIndex}"
-                        onclick="submitFeedback(${msgIndex}, 'thumbs_up')" title="Helpful">&#128077;</button>
+                        onclick="submitFeedback(${msgIndex}, 'thumbs_up')" title="Helpful — opens note box">&#128077;</button>
                     <button class="feedback-btn" id="fb-down-${msgIndex}"
-                        onclick="submitFeedback(${msgIndex}, 'thumbs_down')" title="Not helpful">&#128078;</button>
+                        onclick="submitFeedback(${msgIndex}, 'thumbs_down')" title="Not helpful — opens note box">&#128078;</button>
                     <button class="feedback-btn" id="fb-flag-${msgIndex}"
-                        onclick="toggleFlagNotes(${msgIndex})" title="Flag for review">&#9873; Flag</button>
+                        onclick="submitFeedback(${msgIndex}, 'flagged')" title="Flag for review — opens note box">&#9873; Flag</button>
                     <button class="feedback-btn" id="fb-mic-${msgIndex}"
                         onclick="toggleVoiceNote(${msgIndex})" title="Dictate note">&#127908;</button>
                     <input type="text" class="feedback-initials" id="fb-init-${msgIndex}"
@@ -1841,8 +1841,8 @@
                 </div>
                 <div class="flag-notes" id="flag-notes-${msgIndex}">
                     <textarea id="flag-text-${msgIndex}"
-                        placeholder="What was missing or wrong? (optional)"></textarea>
-                    <button class="flag-submit-btn" onclick="submitFlag(${msgIndex})">Submit Flag</button>
+                        placeholder="Add a comment (what worked, what didn't, what was missing). Then click Update to send it with your rating."></textarea>
+                    <button class="flag-submit-btn" onclick="updateFeedbackNotes(${msgIndex})">Update notes</button>
                 </div>`;
         }
 
@@ -1851,11 +1851,33 @@
             if (el) { el.textContent = text; el.style.display = 'inline'; }
         }
 
+        // Apply the active-X visual state to one rating button (and clear the other two)
+        function _markActiveRating(msgIndex, rating) {
+            document.getElementById(`fb-up-${msgIndex}`)?.classList.remove('active-good');
+            document.getElementById(`fb-down-${msgIndex}`)?.classList.remove('active-bad');
+            document.getElementById(`fb-flag-${msgIndex}`)?.classList.remove('active-flag');
+            if (rating === 'thumbs_up')        document.getElementById(`fb-up-${msgIndex}`)?.classList.add('active-good');
+            else if (rating === 'thumbs_down') document.getElementById(`fb-down-${msgIndex}`)?.classList.add('active-bad');
+            else if (rating === 'flagged')     document.getElementById(`fb-flag-${msgIndex}`)?.classList.add('active-flag');
+        }
+
+        // Read which rating is currently marked active on the bar (or null if none)
+        function _currentActiveRating(msgIndex) {
+            if (document.getElementById(`fb-up-${msgIndex}`)?.classList.contains('active-good'))   return 'thumbs_up';
+            if (document.getElementById(`fb-down-${msgIndex}`)?.classList.contains('active-bad'))  return 'thumbs_down';
+            if (document.getElementById(`fb-flag-${msgIndex}`)?.classList.contains('active-flag')) return 'flagged';
+            return null;
+        }
+
+        // Submit feedback for any rating. Picks up whatever notes are currently in the
+        // textarea (so first-click submits with empty notes; later "Update notes" re-submits
+        // with whatever the user typed). Backend upserts by turn_id, so re-submission is safe.
         function submitFeedback(msgIndex, rating) {
             const msg = messageHistory[msgIndex];
             if (!msg) return;
             const initials = document.getElementById(`fb-init-${msgIndex}`)?.value
                 || userDisplayName;
+            const notes = document.getElementById(`flag-text-${msgIndex}`)?.value || '';
 
             // Capture prior turns so admin can see full conversation context
             const priorTurns = messageHistory.slice(0, msgIndex).map(m => ({
@@ -1876,66 +1898,31 @@
                     rating,
                     initials,
                     reasoning_level: msg.reasoning_level,
-                    notes: '',
+                    notes,
                     conversation_history: priorTurns
                 })
             }).then(r => { handleAuthError(r); }).catch(err => console.error('Feedback error:', err));
 
-            // Visual confirmation
-            document.getElementById(`fb-up-${msgIndex}`)?.classList.remove('active-good');
-            document.getElementById(`fb-down-${msgIndex}`)?.classList.remove('active-bad');
-            if (rating === 'thumbs_up') {
-                document.getElementById(`fb-up-${msgIndex}`)?.classList.add('active-good');
-                showFeedbackSaved(msgIndex, '✓ Thanks!');
-            } else {
-                document.getElementById(`fb-down-${msgIndex}`)?.classList.add('active-bad');
-                showFeedbackSaved(msgIndex, '✓ Noted');
+            _markActiveRating(msgIndex, rating);
+
+            // Open the notes panel so the user can optionally add a comment after rating
+            const notesPanel = document.getElementById(`flag-notes-${msgIndex}`);
+            if (notesPanel && !notesPanel.classList.contains('open')) {
+                notesPanel.classList.add('open');
             }
+
+            const baseMsg = rating === 'thumbs_up' ? '✓ Thanks!'
+                          : rating === 'thumbs_down' ? '✓ Noted'
+                          : '✓ Flagged for review';
+            showFeedbackSaved(msgIndex, notes ? baseMsg + ' (with note)' : baseMsg + ' — add a note?');
         }
 
-        function toggleFlagNotes(msgIndex) {
-            const notes = document.getElementById(`flag-notes-${msgIndex}`);
-            const btn = document.getElementById(`fb-flag-${msgIndex}`);
-            if (notes) {
-                notes.classList.toggle('open');
-                btn?.classList.toggle('active-flag');
-            }
-        }
-
-        function submitFlag(msgIndex) {
-            const msg = messageHistory[msgIndex];
-            if (!msg) return;
-            const notes = document.getElementById(`flag-text-${msgIndex}`)?.value || '';
-            const initials = document.getElementById(`fb-init-${msgIndex}`)?.value
-                || userDisplayName;
-
-            // Capture prior turns so admin can see full conversation context
-            const priorTurns = messageHistory.slice(0, msgIndex).map(m => ({
-                message: m.message,
-                response: (m.response || '').slice(0, 2000),
-                turn_number: m.turn_number || 0
-            }));
-
-            fetch(`${API_BASE}/feedback`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...authHeaders() },
-                body: JSON.stringify({
-                    conversation_id: conversationId,
-                    turn_id: msg.turn_id || '',
-                    turn_number: msg.turn_number || 0,
-                    message: msg.message,
-                    response: msg.response,
-                    rating: 'flagged',
-                    initials,
-                    reasoning_level: msg.reasoning_level,
-                    notes,
-                    conversation_history: priorTurns
-                })
-            }).then(r => { handleAuthError(r); }).catch(err => console.error('Flag error:', err));
-
-            document.getElementById(`flag-notes-${msgIndex}`)?.classList.remove('open');
-            document.getElementById(`fb-flag-${msgIndex}`)?.classList.add('active-flag');
-            showFeedbackSaved(msgIndex, '✓ Flagged for review');
+        // Re-submit feedback with whatever notes are in the textarea, using the
+        // currently-active rating. If no rating is active yet (user typed notes
+        // before clicking a rating), default to flagged so the row gets reviewed.
+        function updateFeedbackNotes(msgIndex) {
+            const rating = _currentActiveRating(msgIndex) || 'flagged';
+            submitFeedback(msgIndex, rating);
         }
 
         // ---------------------------------------------------------------
