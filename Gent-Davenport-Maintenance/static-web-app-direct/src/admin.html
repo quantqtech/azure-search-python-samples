@@ -1218,7 +1218,7 @@
                             <div class="pane-title">Recommended Upload</div>
                             <div>
                                 <div class="field-label">Cleaned question</div>
-                                <input type="text" id="cur-q-${i}" class="cur-edit-q" value="${escHtml(item.proposed_question || '')}" ${editable}>
+                                <textarea id="cur-q-${i}" class="cur-edit-q" rows="2" ${editable}>${escHtml(item.proposed_question || '')}</textarea>
                             </div>
                             <div>
                                 <div class="field-label">Cleaned answer (markdown)</div>
