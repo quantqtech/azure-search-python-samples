@@ -1907,6 +1907,186 @@ async def update_feedback(req: Request) -> JSONResponse:
 
 
 # ---------------------------------------------------------------------------
+# Curation endpoints — self-improving feedback loop
+# (LLM drafts proposed Q&A from flagged feedback; admin approves; blob written;
+#  nightly unified rebuild merges curated chunks into davenport-kb-unified)
+# ---------------------------------------------------------------------------
+
+@app.route(route="curation/queue", methods=["GET"])
+async def curation_queue(req: Request) -> JSONResponse:
+    """List curation proposals for admin review.
+
+    Query params:
+      ?status=proposed|deferred|not_actionable|approved|rejected|all
+        Default: 'proposed'
+    """
+    auth_result = auth_helper.require_admin(req)
+    if isinstance(auth_result, JSONResponse):
+        return auth_result
+
+    import curation
+    status = req.query_params.get("status") or "proposed"
+    if status not in ("proposed", "deferred", "not_actionable", "approved", "rejected", "all"):
+        return JSONResponse({"error": "Invalid status filter"}, status_code=400)
+
+    try:
+        rows = curation.list_curation_queue(status_filter=status)
+        return JSONResponse(rows, status_code=200)
+    except Exception as e:
+        logging.error(f"curation_queue failed: {e}")
+        return JSONResponse({"error": "Failed to load curation queue"}, status_code=500)
+
+
+@app.route(route="curation/{partition_key}/{row_key}", methods=["PATCH"])
+async def curation_edit(req: Request) -> JSONResponse:
+    """Inline-edit a proposal's proposed_question / proposed_answer / proposed_citations."""
+    auth_result = auth_helper.require_admin(req)
+    if isinstance(auth_result, JSONResponse):
+        return auth_result
+
+    import curation
+    pk = req.path_params.get("partition_key", "")
+    rk = req.path_params.get("row_key", "")
+    err = curation.validate_pk_rk(pk, rk)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+
+    try:
+        body = await req.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+    try:
+        result = curation.edit_proposal(pk, rk, body or {})
+        return JSONResponse(result, status_code=200)
+    except Exception as e:
+        logging.error(f"curation_edit failed for {pk}/{rk}: {e}")
+        return JSONResponse({"error": "Failed to update proposal"}, status_code=500)
+
+
+@app.route(route="curation/{partition_key}/{row_key}/approve", methods=["POST"])
+async def curation_approve(req: Request) -> JSONResponse:
+    """Approve a proposal: write blob, insert ledger row, MERGE feedback row."""
+    auth_result = auth_helper.require_admin(req)
+    if isinstance(auth_result, JSONResponse):
+        return auth_result
+    admin_user = auth_result.get("display_name", auth_result.get("sub", "admin"))
+
+    import curation
+    pk = req.path_params.get("partition_key", "")
+    rk = req.path_params.get("row_key", "")
+    err = curation.validate_pk_rk(pk, rk)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+
+    # Body is optional — admin may approve with or without inline edits
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+
+    try:
+        result = curation.approve_proposal(pk, rk, body or {}, admin_user=admin_user)
+    except Exception as e:
+        logging.error(f"curation_approve failed for {pk}/{rk}: {e}")
+        return JSONResponse({"error": "Failed to approve proposal"}, status_code=500)
+
+    if result.get("status") == "approved":
+        return JSONResponse(result, status_code=200)
+    if result.get("status") == "partial":
+        return JSONResponse(result, status_code=207)  # multi-status — surface partial state
+    return JSONResponse(result, status_code=400)
+
+
+@app.route(route="curation/{partition_key}/{row_key}/reject", methods=["POST"])
+async def curation_reject(req: Request) -> JSONResponse:
+    """Reject a proposal with a 1-line reason."""
+    auth_result = auth_helper.require_admin(req)
+    if isinstance(auth_result, JSONResponse):
+        return auth_result
+    admin_user = auth_result.get("display_name", auth_result.get("sub", "admin"))
+
+    import curation
+    pk = req.path_params.get("partition_key", "")
+    rk = req.path_params.get("row_key", "")
+    err = curation.validate_pk_rk(pk, rk)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+
+    try:
+        body = await req.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+    reason = (body or {}).get("rejection_reason", "")
+    try:
+        result = curation.reject_proposal(pk, rk, reason, admin_user=admin_user)
+    except Exception as e:
+        logging.error(f"curation_reject failed for {pk}/{rk}: {e}")
+        return JSONResponse({"error": "Failed to reject proposal"}, status_code=500)
+
+    if result.get("status") == "rejected":
+        return JSONResponse(result, status_code=200)
+    return JSONResponse(result, status_code=400)
+
+
+@app.route(route="curation/{partition_key}/{row_key}/defer", methods=["POST"])
+async def curation_defer(req: Request) -> JSONResponse:
+    """Send a proposal back to the deferred queue."""
+    auth_result = auth_helper.require_admin(req)
+    if isinstance(auth_result, JSONResponse):
+        return auth_result
+    admin_user = auth_result.get("display_name", auth_result.get("sub", "admin"))
+
+    import curation
+    pk = req.path_params.get("partition_key", "")
+    rk = req.path_params.get("row_key", "")
+    err = curation.validate_pk_rk(pk, rk)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+
+    try:
+        result = curation.defer_proposal(pk, rk, admin_user=admin_user)
+        return JSONResponse(result, status_code=200)
+    except Exception as e:
+        logging.error(f"curation_defer failed for {pk}/{rk}: {e}")
+        return JSONResponse({"error": "Failed to defer proposal"}, status_code=500)
+
+
+@app.route(route="curation/run-evaluator", methods=["POST"])
+async def curation_run_evaluator(req: Request) -> JSONResponse:
+    """Manual 'Run now' for the evaluator. Capped at 10 rows for HTTP timeout safety."""
+    auth_result = auth_helper.require_admin(req)
+    if isinstance(auth_result, JSONResponse):
+        return auth_result
+
+    import curation
+    try:
+        summary = curation.run_evaluator_batch(max_rows=10)
+        return JSONResponse(summary, status_code=200)
+    except Exception as e:
+        logging.error(f"curation_run_evaluator failed: {e}")
+        return JSONResponse({"error": "Evaluator run failed"}, status_code=500)
+
+
+@app.route(route="admin/rebuild-unified", methods=["POST"])
+async def admin_rebuild_unified(req: Request) -> JSONResponse:
+    """Manual 'Rebuild now' — regenerates davenport-kb-unified from the 5 source
+    indexes + active curated blobs. Useful right after a batch of approvals."""
+    auth_result = auth_helper.require_admin(req)
+    if isinstance(auth_result, JSONResponse):
+        return auth_result
+
+    try:
+        import rebuild_unified
+        summary = rebuild_unified.rebuild_unified_index(verbose=False)
+        return JSONResponse(summary, status_code=200)
+    except Exception as e:
+        logging.error(f"admin_rebuild_unified failed: {e}")
+        return JSONResponse({"error": f"Rebuild failed: {str(e)[:200]}"}, status_code=500)
+
+
+# ---------------------------------------------------------------------------
 # Voice memo endpoint — save audio recordings for later transcription
 # ---------------------------------------------------------------------------
 
@@ -2834,3 +3014,35 @@ async def delete_time_entry(req: Request) -> JSONResponse:
     except Exception as e:
         logging.error(f"Failed to delete time entry: {e}")
         return JSONResponse({"error": "Failed to delete time entry"}, status_code=500)
+
+
+# ---------------------------------------------------------------------------
+# Timer triggers — nightly self-improvement loop
+#
+#   06:00 UTC = 02:00 ET — evaluator drafts proposals from new feedback
+#   06:30 UTC = 02:30 ET — unified rebuild pulls yesterday's approvals into
+#                          davenport-kb-unified (the indexer-equivalent step
+#                          for curated content; existing 5 sources continue
+#                          to come in via Foundry's PT30M indexer)
+# ---------------------------------------------------------------------------
+
+@app.timer_trigger(arg_name="evaluator_t", schedule="0 0 6 * * *", run_on_startup=False, use_monitor=False)
+def evaluator_timer(evaluator_t: func.TimerRequest) -> None:
+    """Nightly evaluator: drafts curation proposals from new flagged/thumbs_down feedback."""
+    try:
+        import curation
+        summary = curation.run_evaluator_batch(max_rows=25)
+        logging.info(f"evaluator_timer summary: {summary}")
+    except Exception as e:
+        logging.error(f"evaluator_timer failed: {e}")
+
+
+@app.timer_trigger(arg_name="rebuild_t", schedule="0 30 6 * * *", run_on_startup=False, use_monitor=False)
+def unified_rebuild_timer(rebuild_t: func.TimerRequest) -> None:
+    """Nightly unified rebuild: merges 5 source indexes + active curated blobs into davenport-kb-unified."""
+    try:
+        import rebuild_unified
+        summary = rebuild_unified.rebuild_unified_index(verbose=False)
+        logging.info(f"unified_rebuild_timer summary: {summary}")
+    except Exception as e:
+        logging.error(f"unified_rebuild_timer failed: {e}")

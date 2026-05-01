@@ -387,6 +387,170 @@
         }
         .form-row input:focus, .form-row select:focus { outline: none; border-color: var(--gent-orange); }
         .user-display-name { font-size: 13px; color: white; opacity: 0.9; }
+
+        /* Curation Queue — LLM proposes, human approves */
+        .curation-controls {
+            display: flex;
+            gap: 0.75rem;
+            padding: 0.75rem 0;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+            align-items: flex-end;
+        }
+        .curation-controls label { display: block; font-size: 13px; color: #555; margin-bottom: 4px; }
+        .curation-controls select {
+            padding: 0.5rem 0.75rem;
+            border: 2px solid var(--border-light);
+            border-radius: 6px;
+            font-size: 14px;
+            min-height: 38px;
+        }
+        .curation-card {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+            margin-bottom: 1.25rem;
+            overflow: hidden;
+            border-left: 4px solid var(--gent-blue);
+        }
+        .cur-header {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 0.75rem 1.25rem;
+            background: #f8f8f8;
+            border-bottom: 1px solid var(--border-light);
+            flex-wrap: wrap;
+            font-size: 13px;
+            color: #777;
+        }
+        .verdict-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        .verdict-gap              { background: #d1e9ff; color: #0a4f8a; }
+        .verdict-wrong            { background: #ffe0e0; color: #8b0000; }
+        .verdict-unclear_question { background: #ececec; color: #333; }
+        .verdict-not_actionable   { background: #f5f5f5; color: #888; }
+        .confidence-bar {
+            position: relative;
+            width: 120px;
+            height: 8px;
+            background: #eee;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .conf-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #f5a623 0%, #4caf50 100%);
+        }
+        .cur-panes {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            padding: 1.25rem;
+        }
+        @media (max-width: 900px) { .cur-panes { grid-template-columns: 1fr; } }
+        .cur-pane { display: flex; flex-direction: column; gap: 0.75rem; }
+        .cur-pane-raw { border-right: 1px solid #eee; padding-right: 1rem; }
+        @media (max-width: 900px) {
+            .cur-pane-raw { border-right: none; border-bottom: 1px solid #eee; padding-right: 0; padding-bottom: 1rem; }
+        }
+        .pane-title {
+            font-size: 13px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--gent-blue);
+            border-bottom: 2px solid var(--gent-orange);
+            padding-bottom: 0.25rem;
+            margin-bottom: 0.25rem;
+        }
+        .raw-question {
+            background: var(--gent-blue);
+            color: white;
+            padding: 0.6rem 0.85rem;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        .raw-response {
+            background: var(--aidan-light-green);
+            padding: 0.6rem 0.85rem;
+            border-radius: 8px;
+            font-size: 13px;
+            line-height: 1.5;
+            max-height: 150px;
+            overflow-y: auto;
+            cursor: pointer;
+        }
+        .raw-response.expanded { max-height: none; }
+        .cur-edit-q, .cur-edit-a {
+            width: 100%;
+            border: 2px solid var(--border-light);
+            border-radius: 6px;
+            padding: 0.5rem 0.75rem;
+            font-size: 14px;
+            font-family: inherit;
+            box-sizing: border-box;
+        }
+        .cur-edit-a { font-family: 'Consolas', 'Monaco', monospace; resize: vertical; min-height: 200px; }
+        .cur-edit-q:focus, .cur-edit-a:focus { outline: none; border-color: var(--gent-orange); }
+        .cur-citations {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.4rem;
+            font-size: 12px;
+        }
+        .cit-chip {
+            background: #eef4ff;
+            color: var(--gent-blue);
+            padding: 2px 8px;
+            border-radius: 12px;
+            text-decoration: none;
+            font-size: 11px;
+            max-width: 280px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .cit-chip:hover { background: #d4e4ff; }
+        .cur-reasoning {
+            background: #fff3cd;
+            border-left: 3px solid var(--gent-orange);
+            padding: 0.5rem 0.75rem;
+            border-radius: 4px;
+            font-size: 13px;
+            font-style: italic;
+            color: #555;
+        }
+        .cur-actions {
+            display: flex;
+            gap: 0.75rem;
+            padding: 0.75rem 1.25rem;
+            border-top: 1px solid var(--border-light);
+            background: #fafafa;
+            flex-wrap: wrap;
+        }
+        .cur-actions .action-btn.primary {
+            background: var(--gent-blue);
+            color: white;
+            border-color: var(--gent-blue);
+        }
+        .cur-actions .action-btn.primary:hover {
+            background: var(--gent-blue-dark);
+            border-color: var(--gent-blue-dark);
+        }
+        .cur-status-msg {
+            font-size: 13px;
+            margin-left: 0.75rem;
+            align-self: center;
+        }
+        .cur-status-msg.success { color: #2e7d32; }
+        .cur-status-msg.error { color: #c00; }
     </style>
 </head>
 <body>
@@ -459,8 +623,40 @@
             <div id="add-user-msg" style="font-size:13px;margin-top:0.5rem"></div>
         </div>
 
-        <!-- Feedback Review -->
-        <div class="section-title" style="margin-top:2rem">Feedback Review</div>
+        <!-- Curation Queue — LLM proposes Q&A from feedback gaps; admin approves -->
+        <div class="section-title" style="margin-top:2rem">
+            Curation Queue
+            <span style="font-size:13px;color:#888;font-weight:normal;margin-left:0.5rem">
+                — LLM-drafted Q&amp;A from flagged feedback, awaiting your review
+            </span>
+        </div>
+        <div class="curation-controls">
+            <div>
+                <label for="curation-status">Show</label>
+                <select id="curation-status" onchange="loadCuration()">
+                    <option value="proposed" selected>Proposed (pending review)</option>
+                    <option value="deferred">Deferred (low confidence)</option>
+                    <option value="not_actionable">Not actionable</option>
+                    <option value="approved">Approved (history)</option>
+                    <option value="rejected">Rejected (history)</option>
+                    <option value="all">All</option>
+                </select>
+            </div>
+            <button class="load-btn" onclick="loadCuration()">Load</button>
+            <button class="action-btn" onclick="runEvaluatorNow()" title="Run the evaluator on the latest feedback now (capped at 10 rows). Otherwise it runs nightly at 02:00 ET.">
+                &#9881; Run Evaluator Now
+            </button>
+            <button class="action-btn" onclick="rebuildUnifiedNow()" title="Rebuild davenport-kb-unified now to pull recently-approved curated content. Otherwise it runs nightly at 02:30 ET.">
+                &#8635; Rebuild Index Now
+            </button>
+        </div>
+        <div class="stats-bar" id="curation-stats" style="display:none"></div>
+        <div id="curation-list">
+            <div class="empty-state">Click Load to see proposals.</div>
+        </div>
+
+        <!-- Feedback Review — raw history of every rating submitted (broader view) -->
+        <div class="section-title" style="margin-top:2.5rem">Feedback Review</div>
         <div id="feedback-list">
             <div class="empty-state">Select filters above and click Load to see feedback.</div>
         </div>
@@ -894,9 +1090,345 @@
             }
         }
 
+        // ---- Curation Queue ----
+
+        const VERDICT_LABELS = {
+            gap:               'Gap',
+            wrong:             'Wrong answer',
+            unclear_question:  'Unclear question',
+            not_actionable:    'Not actionable'
+        };
+
+        async function loadCuration() {
+            const status = document.getElementById('curation-status').value;
+            const listEl  = document.getElementById('curation-list');
+            const statsEl = document.getElementById('curation-stats');
+            listEl.innerHTML = '<div class="spinner"></div>';
+            statsEl.style.display = 'none';
+
+            try {
+                const resp = await fetch(`${API_BASE}/curation/queue?status=${encodeURIComponent(status)}`, {
+                    headers: authHeaders()
+                });
+                if (handleAuthError(resp)) return;
+                const data = await resp.json();
+
+                if (!Array.isArray(data) || data.length === 0) {
+                    listEl.innerHTML = `<div class="empty-state">No items in '${status}' status.</div>`;
+                    return;
+                }
+
+                // Stats
+                const counts = {};
+                data.forEach(d => {
+                    const v = d.evaluator_verdict || 'unknown';
+                    counts[v] = (counts[v] || 0) + 1;
+                });
+                const parts = Object.entries(counts).map(([v, n]) => `${n} ${VERDICT_LABELS[v] || v}`);
+                statsEl.textContent = `${data.length} item${data.length !== 1 ? 's' : ''}` +
+                    (parts.length ? ` — ${parts.join(', ')}` : '');
+                statsEl.style.display = 'block';
+
+                window._curationData = data;
+                listEl.innerHTML = data.map((item, i) => buildCurationCard(item, i)).join('');
+
+            } catch (err) {
+                listEl.innerHTML = `<div class="empty-state" style="color:#c00">Error loading curation queue: ${err.message}</div>`;
+            }
+        }
+
+        function buildCurationCard(item, i) {
+            const verdict = item.evaluator_verdict || 'unknown';
+            const verdictLabel = VERDICT_LABELS[verdict] || verdict;
+            const conf = Math.round((parseFloat(item.evaluator_confidence) || 0) * 100);
+
+            // Date + rating chip
+            let dateStr = item.date || '';
+            if (item.timestamp) {
+                try {
+                    const d = new Date(item.timestamp);
+                    if (!isNaN(d)) dateStr = d.toLocaleString(undefined, { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+                } catch {}
+            }
+            const ratingLabel = RATING_LABELS[item.rating] || item.rating || '';
+
+            // Notes
+            const hasNotes = item.notes && item.notes.trim();
+            const notesHtml = hasNotes
+                ? `<div><div class="field-label">User notes</div>
+                   <div class="notes-box">${escHtml(item.notes)}</div></div>`
+                : '';
+
+            // Conversation history button
+            let history = [];
+            try { history = JSON.parse(item.conversation_history || '[]'); } catch {}
+            const hasHistory = Array.isArray(history) && history.length > 0;
+            const convoBtn = hasHistory
+                ? `<button class="action-btn" onclick="toggleCurationConversation(${i})">&#128196; View Conversation (${history.length + 1} turns)</button>`
+                : '';
+
+            // Citations chips (read-only in V1; admins edit by changing the answer body)
+            const citations = Array.isArray(item.proposed_citations) ? item.proposed_citations : [];
+            const citationChips = citations.length > 0
+                ? citations.map(c => {
+                    const url = (c && c.blob_url) ? c.blob_url : '';
+                    if (!url) return '';
+                    const label = url.split('/').pop() || url;
+                    return `<a class="cit-chip" href="${escHtml(url)}" target="_blank" title="${escHtml(url)}">${escHtml(label)}</a>`;
+                }).join('')
+                : '<span style="color:#999;font-size:12px">(none suggested)</span>';
+
+            // Action buttons depend on status — approved/rejected are read-only
+            const status = item.review_status;
+            const isLive = status === 'proposed' || status === 'deferred';
+            const actionsHtml = isLive
+                ? `<button class="action-btn primary" onclick="approveProposal(${i})">&#10003; Approve &amp; Upload</button>
+                   <button class="action-btn" onclick="rejectProposal(${i})">&#10007; Reject</button>
+                   <button class="action-btn" onclick="deferProposal(${i})">&#9208; Defer</button>
+                   <span class="cur-status-msg" id="cur-msg-${i}"></span>`
+                : `<span class="cur-status-msg">Status: <strong>${escHtml(status || '')}</strong>${item.reviewed_by ? ' by ' + escHtml(item.reviewed_by) : ''}${item.curated_chunk_id ? ' &middot; chunk ' + escHtml(item.curated_chunk_id) : ''}${item.rejection_reason ? ' &middot; reason: ' + escHtml(item.rejection_reason) : ''}</span>`;
+
+            const editable = isLive ? '' : 'readonly';
+
+            return `
+                <div class="curation-card" id="cur-${i}">
+                    <div class="cur-header">
+                        <span class="verdict-badge verdict-${verdict}">${verdictLabel}</span>
+                        <div class="confidence-bar"><div class="conf-fill" style="width:${conf}%"></div></div>
+                        <span>${conf}% confidence</span>
+                        <span style="margin-left:auto">${dateStr}${ratingLabel ? ' · ' + ratingLabel : ''}</span>
+                    </div>
+                    <div class="cur-panes">
+                        <div class="cur-pane cur-pane-raw">
+                            <div class="pane-title">Raw History</div>
+                            <div>
+                                <div class="field-label">Question (machinist)</div>
+                                <div class="raw-question">${escHtml(item.message || '')}</div>
+                            </div>
+                            <div>
+                                <div class="field-label">Agent answer (production) <small style="font-weight:normal;text-transform:none">(click to expand)</small></div>
+                                <div class="raw-response" id="cur-resp-${i}">${formatMarkdown(item.response || '')}</div>
+                            </div>
+                            ${notesHtml}
+                            ${convoBtn ? '<div>' + convoBtn + '</div>' : ''}
+                        </div>
+                        <div class="cur-pane cur-pane-proposed">
+                            <div class="pane-title">Recommended Upload</div>
+                            <div>
+                                <div class="field-label">Cleaned question</div>
+                                <input type="text" id="cur-q-${i}" class="cur-edit-q" value="${escHtml(item.proposed_question || '')}" ${editable}>
+                            </div>
+                            <div>
+                                <div class="field-label">Cleaned answer (markdown)</div>
+                                <textarea id="cur-a-${i}" class="cur-edit-a" ${editable}>${escHtml(item.proposed_answer || '')}</textarea>
+                            </div>
+                            <div>
+                                <div class="field-label">Citations</div>
+                                <div class="cur-citations">${citationChips}</div>
+                            </div>
+                            <div>
+                                <div class="field-label">Evaluator reasoning</div>
+                                <div class="cur-reasoning">${escHtml(item.evaluator_reasoning || '(none)')}</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="cur-actions">${actionsHtml}</div>
+                    <div class="convo-panel" id="cur-convo-${i}" style="display:none"></div>
+                </div>`;
+        }
+
+        // Click handler for the agent-response box (delegated since we lazy-build cards)
+        document.addEventListener('click', (e) => {
+            const t = e.target.closest('.raw-response');
+            if (t) t.classList.toggle('expanded');
+        });
+
+        function toggleCurationConversation(i) {
+            const panel = document.getElementById(`cur-convo-${i}`);
+            if (!panel) return;
+            if (panel.innerHTML) {
+                panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+                return;
+            }
+            const item = window._curationData[i];
+            let history = [];
+            try { history = JSON.parse(item.conversation_history || '[]'); } catch {}
+            let html = '';
+            history.forEach((turn, idx) => {
+                html += `<div class="convo-turn">
+                    <div class="turn-label">Turn ${idx + 1}</div>
+                    <div class="turn-q">${escHtml(turn.message || '')}</div>
+                    <div class="turn-r">${formatMarkdown(turn.response || '')}</div>
+                </div>`;
+            });
+            html += `<div class="convo-turn current-turn">
+                <div class="turn-label">Turn ${history.length + 1} (rated)</div>
+                <div class="turn-q">${escHtml(item.message || '')}</div>
+                <div class="turn-r">${formatMarkdown(item.response || '')}</div>
+            </div>`;
+            panel.innerHTML = html;
+            panel.style.display = 'block';
+        }
+
+        function _readEdits(i) {
+            return {
+                proposed_question: document.getElementById(`cur-q-${i}`).value,
+                proposed_answer:   document.getElementById(`cur-a-${i}`).value,
+                // V1: citations are read-only in UI; pass through what was already on the row
+                proposed_citations: window._curationData[i].proposed_citations || [],
+            };
+        }
+
+        function _setMsg(i, text, kind) {
+            const el = document.getElementById(`cur-msg-${i}`);
+            if (!el) return;
+            el.textContent = text;
+            el.className = 'cur-status-msg' + (kind ? ' ' + kind : '');
+        }
+
+        async function approveProposal(i) {
+            const item = window._curationData[i];
+            const edits = _readEdits(i);
+
+            if (!edits.proposed_question.trim() || !edits.proposed_answer.trim()) {
+                _setMsg(i, 'Question and answer are required.', 'error');
+                return;
+            }
+            if (edits.proposed_answer.trim() === (item.response || '').trim()) {
+                _setMsg(i, 'Refusing: cleaned answer is identical to the original agent answer (no fix).', 'error');
+                return;
+            }
+            if (!confirm('Approve and upload this Q&A?')) return;
+
+            _setMsg(i, 'Uploading...', '');
+            try {
+                const resp = await fetch(
+                    `${API_BASE}/curation/${encodeURIComponent(item.date)}/${encodeURIComponent(item.id)}/approve`,
+                    {
+                        method: 'POST',
+                        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                        body: JSON.stringify(edits)
+                    }
+                );
+                if (handleAuthError(resp)) return;
+                const data = await resp.json();
+                if (resp.ok) {
+                    _setMsg(i, `Approved — ${data.curated_chunk_id}. Will appear in next index rebuild.`, 'success');
+                    setTimeout(loadCuration, 1500);
+                } else if (resp.status === 207) {
+                    _setMsg(i, `Partial: ${data.error || 'see logs'}`, 'error');
+                } else {
+                    _setMsg(i, `Failed: ${data.error || resp.status}`, 'error');
+                }
+            } catch (err) {
+                _setMsg(i, `Error: ${err.message}`, 'error');
+            }
+        }
+
+        async function rejectProposal(i) {
+            const item = window._curationData[i];
+            const reason = prompt('Why are you rejecting this proposal? (1 sentence)');
+            if (!reason || !reason.trim()) return;
+
+            _setMsg(i, 'Rejecting...', '');
+            try {
+                const resp = await fetch(
+                    `${API_BASE}/curation/${encodeURIComponent(item.date)}/${encodeURIComponent(item.id)}/reject`,
+                    {
+                        method: 'POST',
+                        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ rejection_reason: reason.trim() })
+                    }
+                );
+                if (handleAuthError(resp)) return;
+                if (resp.ok) {
+                    _setMsg(i, 'Rejected.', 'success');
+                    setTimeout(loadCuration, 1000);
+                } else {
+                    const data = await resp.json().catch(() => ({}));
+                    _setMsg(i, `Failed: ${data.error || resp.status}`, 'error');
+                }
+            } catch (err) {
+                _setMsg(i, `Error: ${err.message}`, 'error');
+            }
+        }
+
+        async function deferProposal(i) {
+            const item = window._curationData[i];
+            _setMsg(i, 'Deferring...', '');
+            try {
+                const resp = await fetch(
+                    `${API_BASE}/curation/${encodeURIComponent(item.date)}/${encodeURIComponent(item.id)}/defer`,
+                    {
+                        method: 'POST',
+                        headers: authHeaders()
+                    }
+                );
+                if (handleAuthError(resp)) return;
+                if (resp.ok) {
+                    _setMsg(i, 'Deferred.', 'success');
+                    setTimeout(loadCuration, 1000);
+                } else {
+                    const data = await resp.json().catch(() => ({}));
+                    _setMsg(i, `Failed: ${data.error || resp.status}`, 'error');
+                }
+            } catch (err) {
+                _setMsg(i, `Error: ${err.message}`, 'error');
+            }
+        }
+
+        async function runEvaluatorNow() {
+            if (!confirm('Run the evaluator now? Will process up to 10 unrated feedback items and may take ~30-60 seconds.')) return;
+            const statsEl = document.getElementById('curation-stats');
+            statsEl.textContent = 'Running evaluator...';
+            statsEl.style.display = 'block';
+            try {
+                const resp = await fetch(`${API_BASE}/curation/run-evaluator`, {
+                    method: 'POST',
+                    headers: authHeaders()
+                });
+                if (handleAuthError(resp)) return;
+                const data = await resp.json();
+                if (resp.ok) {
+                    const summary = `Processed ${data.processed || 0}` +
+                        (data.by_status ? ' — ' + Object.entries(data.by_status).map(([s, n]) => `${n} ${s}`).join(', ') : '') +
+                        (data.errors ? ` (${data.errors} errors)` : '');
+                    statsEl.textContent = summary;
+                    loadCuration();
+                } else {
+                    statsEl.textContent = `Failed: ${data.error || resp.status}`;
+                }
+            } catch (err) {
+                statsEl.textContent = `Error: ${err.message}`;
+            }
+        }
+
+        async function rebuildUnifiedNow() {
+            if (!confirm('Rebuild davenport-kb-unified now? This may take 2-5 minutes and will include any approved curated content.')) return;
+            const statsEl = document.getElementById('curation-stats');
+            statsEl.textContent = 'Rebuilding unified index... (this may take 2-5 minutes)';
+            statsEl.style.display = 'block';
+            try {
+                const resp = await fetch(`${API_BASE}/admin/rebuild-unified`, {
+                    method: 'POST',
+                    headers: authHeaders()
+                });
+                if (handleAuthError(resp)) return;
+                const data = await resp.json();
+                if (resp.ok) {
+                    statsEl.textContent = `Rebuild complete: ${data.total_uploaded || 0} docs uploaded; final count = ${data.final_count}`;
+                } else {
+                    statsEl.textContent = `Failed: ${data.error || resp.status}`;
+                }
+            } catch (err) {
+                statsEl.textContent = `Error: ${err.message}`;
+            }
+        }
+
         // Auto-load on page open
         loadUsers();
         loadFeedback();
+        loadCuration();
     </script>
 </body>
 </html>
