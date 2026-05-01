@@ -1183,12 +1183,28 @@
             // Action buttons depend on status — approved/rejected are read-only
             const status = item.review_status;
             const isLive = status === 'proposed' || status === 'deferred';
+
+            // For approved cards: show whether the curated chunk has been indexed yet
+            let indexBadge = '';
+            if (status === 'approved') {
+                if (item.indexed_at) {
+                    let indexedStr = item.indexed_at;
+                    try {
+                        const d = new Date(item.indexed_at);
+                        if (!isNaN(d)) indexedStr = d.toLocaleString(undefined, { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+                    } catch {}
+                    indexBadge = ` &middot; <span style="color:#2e7d32">&#10003; Indexed ${escHtml(indexedStr)}</span>`;
+                } else {
+                    indexBadge = ` &middot; <span style="color:#b07000">&#9203; Awaiting next rebuild</span>`;
+                }
+            }
+
             const actionsHtml = isLive
                 ? `<button class="action-btn primary" onclick="approveProposal(${i})">&#10003; Approve &amp; Upload</button>
                    <button class="action-btn" onclick="rejectProposal(${i})">&#10007; Reject</button>
                    <button class="action-btn" onclick="deferProposal(${i})">&#9208; Defer</button>
                    <span class="cur-status-msg" id="cur-msg-${i}"></span>`
-                : `<span class="cur-status-msg">Status: <strong>${escHtml(status || '')}</strong>${item.reviewed_by ? ' by ' + escHtml(item.reviewed_by) : ''}${item.curated_chunk_id ? ' &middot; chunk ' + escHtml(item.curated_chunk_id) : ''}${item.rejection_reason ? ' &middot; reason: ' + escHtml(item.rejection_reason) : ''}</span>`;
+                : `<span class="cur-status-msg">Status: <strong>${escHtml(status || '')}</strong>${item.reviewed_by ? ' by ' + escHtml(item.reviewed_by) : ''}${item.curated_chunk_id ? ' &middot; chunk ' + escHtml(item.curated_chunk_id) : ''}${item.rejection_reason ? ' &middot; reason: ' + escHtml(item.rejection_reason) : ''}${indexBadge}</span>`;
 
             const editable = isLive ? '' : 'readonly';
 

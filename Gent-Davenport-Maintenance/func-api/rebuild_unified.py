@@ -240,10 +240,13 @@ def read_curated_blobs(verbose=True):
 
         front_matter, body = _split_front_matter(text)
         yield {
-            "chunk_id":     chunk_id,
-            "blob_url":     blob_url,
-            "body":         body,
-            "front_matter": front_matter,
+            "chunk_id":            chunk_id,
+            "blob_url":            blob_url,
+            "body":                body,
+            "front_matter":        front_matter,
+            "ledger_pk":           row.get("PartitionKey", ""),
+            "source_feedback_pk":  row.get("source_feedback_pk", ""),
+            "source_feedback_rk":  row.get("source_feedback_rk", ""),
         }
 
 
@@ -266,6 +269,64 @@ def map_curated_doc(parsed_blob):
         "source_type":       "curated",
         "category":          "user-curated",
     }
+
+
+# ── Indexed-at stamping ──────────────────────────────────────────────────────
+def _stamp_indexed_at(curated_meta, verbose=True):
+    """After a successful curated upload, MERGE indexed_at onto:
+      - the curatedqa ledger row (last_indexed_at)
+      - the source feedback row (indexed_at)
+    so the admin UI can distinguish 'approved & live' from 'approved, awaiting rebuild'.
+
+    Best-effort: a stamping failure logs a warning but doesn't break the rebuild.
+    """
+    from datetime import datetime, timezone
+    from azure.data.tables import TableServiceClient, UpdateMode
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    table_endpoint = f"https://{STORAGE_ACCOUNT}.table.core.windows.net"
+
+    try:
+        ts = TableServiceClient(endpoint=table_endpoint, credential=credential)
+        ledger = ts.get_table_client(CURATED_TABLE)
+        feedback = ts.get_table_client("feedback")
+    except Exception as e:
+        if verbose:
+            print(f"    WARN: could not open tables for indexed_at stamping: {e}")
+        return
+
+    stamped_ledger = 0
+    stamped_feedback = 0
+    for meta in curated_meta:
+        chunk_id   = meta.get("chunk_id", "")
+        ledger_pk  = meta.get("ledger_pk", "")
+        fb_pk      = meta.get("source_feedback_pk", "")
+        fb_rk      = meta.get("source_feedback_rk", "")
+
+        if chunk_id and ledger_pk:
+            try:
+                ledger.update_entity(
+                    {"PartitionKey": ledger_pk, "RowKey": chunk_id, "last_indexed_at": now_iso},
+                    mode=UpdateMode.MERGE,
+                )
+                stamped_ledger += 1
+            except Exception as e:
+                if verbose:
+                    print(f"    WARN: ledger stamp failed for {chunk_id}: {e}")
+
+        if fb_pk and fb_rk:
+            try:
+                feedback.update_entity(
+                    {"PartitionKey": fb_pk, "RowKey": fb_rk, "indexed_at": now_iso},
+                    mode=UpdateMode.MERGE,
+                )
+                stamped_feedback += 1
+            except Exception as e:
+                if verbose:
+                    print(f"    WARN: feedback stamp failed for {fb_pk}/{fb_rk}: {e}")
+
+    if verbose:
+        print(f"    Stamped indexed_at: {stamped_ledger} ledger rows, {stamped_feedback} feedback rows")
 
 
 # ── Main rebuild ──────────────────────────────────────────────────────────────
@@ -321,8 +382,10 @@ def rebuild_unified_index(verbose=True):
     # Pass 6: curated Q&A from blob
     log("Processing: curated Q&A (blob -> unified, no Foundry knowledge source)")
     curated_records = []
+    curated_meta = []  # parallel list to curated_records — for indexed_at stamping
     for parsed in read_curated_blobs(verbose=verbose):
         curated_records.append(map_curated_doc(parsed))
+        curated_meta.append(parsed)
 
     if not curated_records:
         log("  No active curated records to upload")
@@ -338,6 +401,10 @@ def rebuild_unified_index(verbose=True):
         log(f"  Done: {uploaded}/{len(curated_records)} curated docs uploaded")
         summary["by_source"]["curated-qa"] = uploaded
         summary["total_uploaded"] += uploaded
+
+        # Stamp indexed_at on the ledger row + source feedback row so the admin
+        # UI can show "Indexed: <date>" vs "Awaiting next rebuild" per row.
+        _stamp_indexed_at(curated_meta, verbose=verbose)
     log("")
 
     # Verification

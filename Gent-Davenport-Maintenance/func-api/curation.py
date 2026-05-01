@@ -412,6 +412,7 @@ def _to_queue_dict(entity):
         "reviewed_by":           entity.get("reviewed_by"),
         "reviewed_at":           entity.get("reviewed_at"),
         "rejection_reason":      entity.get("rejection_reason"),
+        "indexed_at":            entity.get("indexed_at"),  # set by rebuild when curated chunk lands in davenport-kb-unified
     }
 
 
