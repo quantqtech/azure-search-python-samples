@@ -357,8 +357,10 @@ def list_curation_queue(status_filter=None):
 
     rows = []
     for entity in table.query_entities(query_filter=query):
-        if status_filter is None and not entity.get("review_status"):
-            continue  # skip un-evaluated rows when no filter — only curated lifecycle rows
+        # Always exclude un-evaluated raw feedback — Curation Queue is for rows
+        # the curation system has touched. Raw feedback belongs in Feedback Review.
+        if (status_filter in (None, "all")) and not entity.get("review_status"):
+            continue
         rows.append(_to_queue_dict(entity))
 
     # Sort: highest confidence first, then most recent

@@ -1422,9 +1422,9 @@
         }
 
         async function rebuildUnifiedNow() {
-            if (!confirm('Rebuild davenport-kb-unified now? This may take 2-5 minutes and will include any approved curated content.')) return;
+            if (!confirm('Rebuild davenport-kb-unified now? This may take 3-5 minutes. Azure load balancer cuts the connection at ~230 seconds, so the browser may show a "timeout" message even though the rebuild finishes server-side. Reload the page after 5 minutes to verify.')) return;
             const statsEl = document.getElementById('curation-stats');
-            statsEl.textContent = 'Rebuilding unified index... (this may take 2-5 minutes)';
+            statsEl.textContent = 'Rebuilding unified index... (browser may time out before the rebuild finishes — that is expected)';
             statsEl.style.display = 'block';
             try {
                 const resp = await fetch(`${API_BASE}/admin/rebuild-unified`, {
@@ -1432,14 +1432,30 @@
                     headers: authHeaders()
                 });
                 if (handleAuthError(resp)) return;
-                const data = await resp.json();
-                if (resp.ok) {
+
+                // Try to parse JSON, but tolerate empty/cut-off responses (LB timeout at ~230s)
+                let data = null;
+                try {
+                    data = await resp.json();
+                } catch {
+                    data = null;
+                }
+
+                if (resp.ok && data) {
                     statsEl.textContent = `Rebuild complete: ${data.total_uploaded || 0} docs uploaded; final count = ${data.final_count}`;
+                } else if (resp.ok) {
+                    // 200 OK but empty body — backend started, response truncated
+                    statsEl.textContent = 'Rebuild started. Browser response was cut off (Azure LB ~230s timeout). Wait ~5 min and reload to see updated indexed badges.';
+                } else if (data && data.error) {
+                    statsEl.textContent = `Failed: ${data.error}`;
                 } else {
-                    statsEl.textContent = `Failed: ${data.error || resp.status}`;
+                    // Most common case: connection closed mid-rebuild without status set.
+                    // Server-side rebuild usually still completes.
+                    statsEl.textContent = `Connection closed before rebuild reported back (${resp.status || 'no status'}). The rebuild is likely still running server-side; reload in 5 min and check the indexed badges.`;
                 }
             } catch (err) {
-                statsEl.textContent = `Error: ${err.message}`;
+                // Network-level failure (fetch threw) — same likely cause
+                statsEl.textContent = `Connection error during rebuild (${err.message}). The rebuild may still be running server-side; reload in 5 min and check the indexed badges.`;
             }
         }
 
