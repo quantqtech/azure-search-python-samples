@@ -187,10 +187,17 @@ def _split_front_matter(text):
     return front_matter, body
 
 
-def read_curated_blobs(verbose=True):
-    """Read active curated Q&A entries: cross-reference ledger -> blobs.
+def read_curated_blobs(verbose=True, force_reindex=False):
+    """Read active curated Q&A entries that need (re)indexing.
 
-    Yields dicts with {chunk_id, blob_url, body, front_matter}.
+    Skip logic: a chunk is skipped if it has already been indexed since its
+    last approval — i.e. last_indexed_at >= approved_at (both ISO strings,
+    lexicographic comparison works). Pass force_reindex=True to bypass the
+    skip and re-process every active row (e.g. after a schema change).
+
+    Yields dicts with {chunk_id, blob_url, body, front_matter, ledger_pk,
+    source_feedback_pk, source_feedback_rk}.
+
     Skips ledger rows where active is explicitly False.
     """
     from azure.data.tables import TableServiceClient
@@ -216,11 +223,20 @@ def read_curated_blobs(verbose=True):
     blob_service = BlobServiceClient(account_url=blob_endpoint, credential=credential)
     container = blob_service.get_container_client(CURATED_CONTAINER)
 
+    skipped_already_indexed = 0
     for row in active_rows:
         chunk_id = row.get("RowKey", "")
         blob_url = row.get("blob_url", "")
         if not chunk_id or not blob_url:
             continue
+
+        # Skip if already indexed since last approval — saves an upload + a MERGE
+        if not force_reindex:
+            last_indexed = row.get("last_indexed_at") or ""
+            approved_at  = row.get("approved_at") or ""
+            if last_indexed and approved_at and last_indexed >= approved_at:
+                skipped_already_indexed += 1
+                continue
 
         marker = f"/{CURATED_CONTAINER}/"
         idx = blob_url.find(marker)
@@ -248,6 +264,9 @@ def read_curated_blobs(verbose=True):
             "source_feedback_pk":  row.get("source_feedback_pk", ""),
             "source_feedback_rk":  row.get("source_feedback_rk", ""),
         }
+
+    if verbose and skipped_already_indexed > 0:
+        print(f"  Skipped {skipped_already_indexed} curated chunks already indexed since approval")
 
 
 def map_curated_doc(parsed_blob):
@@ -330,8 +349,13 @@ def _stamp_indexed_at(curated_meta, verbose=True):
 
 
 # ── Main rebuild ──────────────────────────────────────────────────────────────
-def rebuild_unified_index(verbose=True):
+def rebuild_unified_index(verbose=True, force_reindex_curated=False):
     """Build/refresh the unified BM25 index from all 5 source indexes + curated Q&A.
+
+    force_reindex_curated: if True, re-upload every active curated chunk even
+    if its last_indexed_at >= approved_at (which would normally skip it).
+    Use after a schema change or when you suspect drift between blobs and
+    the index. Default False.
 
     Returns a summary dict: {total_uploaded, by_source, final_count}.
     """
@@ -383,12 +407,12 @@ def rebuild_unified_index(verbose=True):
     log("Processing: curated Q&A (blob -> unified, no Foundry knowledge source)")
     curated_records = []
     curated_meta = []  # parallel list to curated_records — for indexed_at stamping
-    for parsed in read_curated_blobs(verbose=verbose):
+    for parsed in read_curated_blobs(verbose=verbose, force_reindex=force_reindex_curated):
         curated_records.append(map_curated_doc(parsed))
         curated_meta.append(parsed)
 
     if not curated_records:
-        log("  No active curated records to upload")
+        log("  No new/changed curated records to upload" if not force_reindex_curated else "  No active curated records to upload")
         summary["by_source"]["curated-qa"] = 0
     else:
         log(f"  {len(curated_records)} active curated records")

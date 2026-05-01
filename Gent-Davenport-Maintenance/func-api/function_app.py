@@ -2072,14 +2072,21 @@ async def curation_run_evaluator(req: Request) -> JSONResponse:
 @app.route(route="admin/rebuild-unified", methods=["POST"])
 async def admin_rebuild_unified(req: Request) -> JSONResponse:
     """Manual 'Rebuild now' — regenerates davenport-kb-unified from the 5 source
-    indexes + active curated blobs. Useful right after a batch of approvals."""
+    indexes + active curated blobs.
+
+    Curated chunks are skipped if already indexed since their last approval.
+    Pass ?force_curated=true to bypass the skip and re-upload every active
+    curated chunk (use after a schema change or when investigating drift).
+    """
     auth_result = auth_helper.require_admin(req)
     if isinstance(auth_result, JSONResponse):
         return auth_result
 
+    force_curated = req.query_params.get("force_curated", "").lower() == "true"
+
     try:
         import rebuild_unified
-        summary = rebuild_unified.rebuild_unified_index(verbose=False)
+        summary = rebuild_unified.rebuild_unified_index(verbose=False, force_reindex_curated=force_curated)
         return JSONResponse(summary, status_code=200)
     except Exception as e:
         logging.error(f"admin_rebuild_unified failed: {e}")
